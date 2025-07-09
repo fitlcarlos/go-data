@@ -74,6 +74,11 @@ type EnvConfig struct {
 	JWTEnabled     bool
 	JWTRequireAuth bool
 
+	// Configurações do serviço
+	ServiceName        string
+	ServiceDisplayName string
+	ServiceDescription string
+
 	// Mapa de todas as variáveis para acesso direto
 	Variables map[string]string
 }
@@ -179,11 +184,7 @@ func loadEnvFile(path string) (map[string]string, error) {
 // parseVariables preenche as configurações a partir das variáveis carregadas
 func (c *EnvConfig) parseVariables() {
 	// Configurações do banco de dados
-	c.DBDriver = c.getEnvString("DB_TYPE", "oracle")
-	if c.DBDriver == "oracle" {
-		// Tenta DB_DRIVER como fallback para compatibilidade
-		c.DBDriver = c.getEnvString("DB_DRIVER", "oracle")
-	}
+	c.DBDriver = c.getEnvString("DB_DRIVER", "oracle")
 	c.DBHost = c.getEnvString("DB_HOST", "localhost")
 	c.DBPort = c.getEnvString("DB_PORT", "1521")
 	c.DBName = c.getEnvString("DB_NAME", "")
@@ -224,6 +225,11 @@ func (c *EnvConfig) parseVariables() {
 	c.JWTAlgorithm = c.getEnvString("JWT_ALGORITHM", "HS256")
 	c.JWTEnabled = c.getEnvBool("JWT_ENABLED", false)
 	c.JWTRequireAuth = c.getEnvBool("JWT_REQUIRE_AUTH", false)
+
+	// Configurações do serviço
+	c.ServiceName = c.getEnvString("SERVICE_NAME", "godata-service")
+	c.ServiceDisplayName = c.getEnvString("SERVICE_DISPLAY_NAME", "GoData OData Service")
+	c.ServiceDescription = c.getEnvString("SERVICE_DESCRIPTION", "Serviço GoData OData v4 para APIs RESTful")
 }
 
 // getEnvString retorna uma string do ambiente ou valor padrão
@@ -308,6 +314,12 @@ func (c *EnvConfig) BuildConnectionString() string {
 // ToServerConfig converte a configuração .env para ServerConfig
 func (c *EnvConfig) ToServerConfig() *ServerConfig {
 	config := &ServerConfig{
+		// Configurações do serviço
+		Name:        c.ServiceName,
+		DisplayName: c.ServiceDisplayName,
+		Description: c.ServiceDescription,
+
+		// Configurações do servidor
 		Host:              c.ServerHost,
 		Port:              c.ServerPort,
 		RoutePrefix:       c.ServerRoutePrefix,

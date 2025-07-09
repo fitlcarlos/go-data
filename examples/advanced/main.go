@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
-	"crypto/tls"
 	"log"
 	"os"
 	"time"
 
 	"github.com/fitlcarlos/go-data/pkg/odata"
-	"github.com/fitlcarlos/go-data/pkg/providers"
 	_ "github.com/fitlcarlos/go-data/pkg/providers" // Importa providers para registrar factories
 )
 
@@ -55,84 +52,6 @@ func main() {
 	startServer(server)
 }
 
-// createAdvancedConfig cria configurações avançadas do servidor
-func createAdvancedConfig() *odata.ServerConfig {
-	// Configuração personalizada para produção
-	config := &odata.ServerConfig{
-		// Configurações básicas
-		Host: "0.0.0.0", // Aceita conexões de qualquer IP
-		Port: 8443,      // Porta HTTPS
-
-		// Configuração TLS para HTTPS
-		TLSConfig: &tls.Config{
-			MinVersion:               tls.VersionTLS12,
-			CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
-			PreferServerCipherSuites: true,
-			CipherSuites: []uint16{
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			},
-		},
-		CertFile:    "server.crt", // Certificado SSL (você precisa gerar)
-		CertKeyFile: "server.key", // Chave privada SSL (você precisa gerar)
-
-		// CORS configurado para produção
-		EnableCORS:       true,
-		AllowedOrigins:   []string{"https://meuapp.com", "https://app.meudominio.com"}, // Domínios específicos
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
-		ExposedHeaders:   []string{"OData-Version", "Content-Type", "X-Total-Count"},
-		AllowCredentials: true, // Permite cookies/credenciais
-
-		// Logging estruturado
-		EnableLogging: true,
-		LogLevel:      "INFO",
-		LogFile:       "odata_server.log",
-
-		// Otimizações
-		EnableCompression: true,
-		MaxRequestSize:    5 * 1024 * 1024, // 5MB - mais restritivo para produção
-
-		// Shutdown graceful
-		ShutdownTimeout: 15 * time.Second,
-
-		// Prefixo customizado
-		RoutePrefix: "/api/v1/odata",
-	}
-
-	// Para desenvolvimento local (sem HTTPS)
-	if isDevelopment() {
-		config.Port = 8080
-		config.TLSConfig = nil
-		config.CertFile = ""
-		config.CertKeyFile = ""
-		config.AllowedOrigins = []string{"*"} // Mais permissivo para desenvolvimento
-		config.AllowCredentials = false
-		config.RoutePrefix = "/odata"
-	}
-
-	return config
-}
-
-// createDatabaseProvider cria e configura o provider do banco
-func createDatabaseProvider() odata.DatabaseProvider {
-	// Configuração para MySQL
-	provider := providers.NewMySQLProvider()
-
-	// String de conexão com configurações otimizadas
-	dsn := "user:password@tcp(localhost:3306)/database?charset=utf8mb4&parseTime=True&loc=Local&timeout=30s&readTimeout=30s&writeTimeout=30s"
-
-	if err := provider.Connect(dsn); err != nil {
-		log.Printf("⚠️  Aviso: Erro ao conectar ao banco: %v", err)
-		log.Println("   Servidor iniciará sem conexão de banco")
-	} else {
-		log.Println("✅ Conectado ao banco MySQL")
-	}
-
-	return provider
-}
-
 // registerEntities registra as entidades no servidor
 func registerEntities(server *odata.Server) error {
 	entities := map[string]interface{}{
@@ -146,8 +65,6 @@ func registerEntities(server *odata.Server) error {
 
 // startServer inicia o servidor com monitoramento
 func startServer(server *odata.Server) {
-	ctx := context.Background()
-
 	log.Println()
 	log.Println("🚀 Iniciando servidor OData...")
 
@@ -155,7 +72,7 @@ func startServer(server *odata.Server) {
 	go monitorServer(server)
 
 	// Inicia o servidor (bloqueante)
-	if err := server.StartWithContext(ctx); err != nil {
+	if err := server.Start(); err != nil {
 		log.Fatalf("❌ Erro ao iniciar servidor: %v", err)
 	}
 }

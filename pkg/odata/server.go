@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +18,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	fiberlogger "github.com/gofiber/fiber/v3/middleware/logger"
-	"github.com/gofiber/fiber/v3/middleware/recover"
+	fiberrecover "github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/kardianos/service"
 )
 
 // EntityAuthConfig configurações de autenticação por entidade
@@ -32,6 +34,11 @@ type EntityAuthConfig struct {
 // ServerConfig representa as configurações do servidor
 type ServerConfig struct {
 	// Configurações básicas
+	Name        string
+	DisplayName string
+	Description string
+
+	// Configurações de host e porta
 	Host string
 	Port int
 
@@ -72,6 +79,9 @@ type ServerConfig struct {
 // DefaultServerConfig retorna uma configuração padrão do servidor
 func DefaultServerConfig() *ServerConfig {
 	return &ServerConfig{
+		Name:              "godata-service",
+		DisplayName:       "GoData OData Service",
+		Description:       "Serviço GoData OData v4 para APIs RESTful",
 		Host:              "localhost",
 		Port:              8080,
 		EnableCORS:        true,
@@ -106,6 +116,11 @@ type Server struct {
 	jwtService        *JWTService
 	entityAuth        map[string]EntityAuthConfig // Configurações de autenticação por entidade
 	eventManager      *EntityEventManager         // Gerenciador de eventos de entidade
+
+	// Campos para gerenciamento de serviço
+	serviceLogger service.Logger
+	serviceCtx    context.Context
+	serviceCancel context.CancelFunc
 }
 
 // NewServer cria uma nova instância do servidor OData
@@ -117,19 +132,19 @@ func NewServer() *Server {
 
 	// Se multi-tenant estiver habilitado, cria servidor multi-tenant
 	if multiTenantConfig.Enabled {
-		return NewMultiTenantServer(multiTenantConfig)
+		return newMultiTenantServer(multiTenantConfig)
 	}
 
 	// Se não está em modo multi-tenant, usa o comportamento original
 	if multiTenantConfig.EnvConfig != nil {
 		provider := multiTenantConfig.EnvConfig.CreateProviderFromConfig()
 		if provider == nil {
-			return NewServerWithConfig(nil, multiTenantConfig.EnvConfig.ToServerConfig())
+			return newServerWithConfig(nil, multiTenantConfig.EnvConfig.ToServerConfig())
 		}
-		return NewServerWithConfig(provider, multiTenantConfig.EnvConfig.ToServerConfig())
+		return newServerWithConfig(provider, multiTenantConfig.EnvConfig.ToServerConfig())
 	}
 
-	return NewServerWithConfig(nil, DefaultServerConfig())
+	return newServerWithConfig(nil, DefaultServerConfig())
 }
 
 // NewServerWithProvider cria servidor com provider específico (mantido para compatibilidade)
@@ -140,7 +155,7 @@ func NewServerWithProvider(provider DatabaseProvider, host string, port int, rou
 
 	// Se multi-tenant estiver habilitado, cria servidor multi-tenant e ignora o provider fornecido
 	if multiTenantConfig.Enabled {
-		server := NewMultiTenantServer(multiTenantConfig)
+		server := newMultiTenantServer(multiTenantConfig)
 		// Sobrescreve configurações básicas do servidor
 		server.config.Host = host
 		server.config.Port = port
@@ -153,11 +168,11 @@ func NewServerWithProvider(provider DatabaseProvider, host string, port int, rou
 	serviceConfig.Host = host
 	serviceConfig.Port = port
 	serviceConfig.RoutePrefix = routePrefix
-	return NewServerWithConfig(provider, serviceConfig)
+	return newServerWithConfig(provider, serviceConfig)
 }
 
 // NewMultiTenantServer cria um servidor multi-tenant
-func NewMultiTenantServer(multiTenantConfig *MultiTenantConfig) *Server {
+func newMultiTenantServer(multiTenantConfig *MultiTenantConfig) *Server {
 	logger := log.New(os.Stdout, "[OData-MultiTenant] ", log.LstdFlags|log.Lshortfile)
 
 	server := &Server{
@@ -193,17 +208,17 @@ func NewServerWithEnv(provider DatabaseProvider) *Server {
 	config, err := LoadEnvOrDefault()
 	if err != nil {
 		log.Printf("Aviso: Não foi possível carregar configurações do .env: %v", err)
-		return NewServerWithConfig(provider, DefaultServerConfig())
+		return newServerWithConfig(provider, DefaultServerConfig())
 	}
 
 	// Imprime configurações carregadas
 	config.PrintLoadedConfig()
 
-	return NewServerWithConfig(provider, config.ToServerConfig())
+	return newServerWithConfig(provider, config.ToServerConfig())
 }
 
-// NewServerWithConfig cria uma nova instância do servidor OData com configurações personalizadas
-func NewServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Server {
+// newServerWithConfig cria uma nova instância do servidor OData com configurações personalizadas
+func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Server {
 	logger := log.New(os.Stdout, "[OData] ", log.LstdFlags|log.Lshortfile)
 
 	server := &Server{
@@ -242,7 +257,7 @@ func NewServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 	}
 
 	// Middleware de recovery sempre ativo para segurança
-	server.router.Use(recover.New())
+	server.router.Use(fiberrecover.New())
 
 	server.setupBaseRoutes()
 
@@ -275,7 +290,7 @@ func (s *Server) setupMultiTenantMiddlewares() {
 		}))
 	}
 
-	s.router.Use(recover.New())
+	s.router.Use(fiberrecover.New())
 }
 
 // setupBaseRoutes configura as rotas básicas do servidor
@@ -411,12 +426,20 @@ func (s *Server) setupEntityRoutes(entityName string) {
 }
 
 // Start inicia o servidor HTTP
+// Detecta automaticamente se deve executar como serviço ou normalmente
 func (s *Server) Start() error {
-	return s.StartWithContext(context.Background())
+	// Detecta se está sendo executado como serviço
+	if s.IsRunningAsService() {
+		s.logger.Printf("🔧 Detectado execução como serviço, iniciando com RunService...")
+		return s.run()
+	}
+
+	s.logger.Printf("🔧 Detectado execução normal, iniciando servidor HTTP...")
+	return s.startWithContext(context.Background())
 }
 
 // StartWithContext inicia o servidor com contexto
-func (s *Server) StartWithContext(ctx context.Context) error {
+func (s *Server) startWithContext(ctx context.Context) error {
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
@@ -532,6 +555,39 @@ func (s *Server) Shutdown() error {
 	s.running = false
 	s.logger.Printf("Servidor parado com sucesso")
 	return nil
+}
+
+// IsRunningAsService detecta se o processo está sendo executado como serviço
+func (s *Server) IsRunningAsService() bool {
+	// Verifica argumentos da linha de comando
+	args := os.Args
+	for _, arg := range args {
+		if arg == "run" || arg == "--service" || arg == "-service" {
+			return true
+		}
+	}
+
+	// Verifica variáveis de ambiente que indicam execução como serviço
+	if os.Getenv("GODATA_RUN_AS_SERVICE") == "true" {
+		return true
+	}
+
+	// No Windows, verifica se está sendo executado pelo SCM
+	if runtime.GOOS == "windows" {
+		// Se não tem console ativo, provavelmente é um serviço
+		if os.Getenv("SESSIONNAME") == "" {
+			return true
+		}
+	}
+
+	// No Linux, verifica se está sendo executado pelo systemd
+	if runtime.GOOS == "linux" {
+		if os.Getenv("INVOCATION_ID") != "" || os.Getppid() == 1 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // IsRunning verifica se o servidor está rodando
@@ -666,20 +722,6 @@ func (s *Server) OnEntityDeletedGlobal(handler func(args EventArgs) error) {
 // OnEntityErrorGlobal registra um handler global para o evento EntityError
 func (s *Server) OnEntityErrorGlobal(handler func(args EventArgs) error) {
 	s.eventManager.SubscribeGlobalFunc(EventEntityError, handler)
-}
-
-// isOriginAllowed verifica se uma origem é permitida
-func (s *Server) isOriginAllowed(origin string) bool {
-	if origin == "" {
-		return true
-	}
-
-	for _, allowed := range s.config.AllowedOrigins {
-		if allowed == "*" || allowed == origin {
-			return true
-		}
-	}
-	return false
 }
 
 // Health check handler
@@ -1590,14 +1632,6 @@ func (s *Server) buildODataResponse(response *ODataResponse, isCollection bool, 
 	}
 }
 
-// writeJSON escreve uma resposta JSON
-func (s *Server) writeJSON(c fiber.Ctx, data interface{}) error {
-	c.Set("Content-Type", "application/json")
-	c.Set("OData-Version", "4.0")
-
-	return c.JSON(data)
-}
-
 // writeError escreve uma resposta de erro
 func (s *Server) writeError(c fiber.Ctx, statusCode int, code, message string) {
 	c.Set("Content-Type", "application/json")
@@ -1611,72 +1645,6 @@ func (s *Server) writeError(c fiber.Ctx, statusCode int, code, message string) {
 	}
 
 	c.JSON(errorResponse)
-}
-
-// parseQueryOptionsWithCustomParser faz o parsing das opções usando o parser customizado
-func (s *Server) parseQueryOptionsWithCustomParser(c fiber.Ctx) (QueryOptions, error) {
-	// Parse usando o parser customizado
-	queryString := string(c.Request().URI().QueryString())
-	queryValues, err := s.urlParser.ParseQuery(queryString)
-	if err != nil {
-		return QueryOptions{}, fmt.Errorf("failed to parse query: %w", err)
-	}
-
-	// Valida a query OData
-	if err := s.urlParser.ValidateODataQuery(queryString); err != nil {
-		return QueryOptions{}, fmt.Errorf("invalid OData query: %w", err)
-	}
-
-	// Extrai parâmetros do sistema OData
-	systemParams := s.urlParser.ExtractODataSystemParams(queryValues)
-
-	// Processa valores específicos do OData
-	processedValues := queryValues
-
-	// Processa valores $expand se presente
-	if expandValue, exists := systemParams["$expand"]; exists {
-		cleanedExpand, err := s.urlParser.ParseExpandValue(expandValue)
-		if err != nil {
-			return QueryOptions{}, fmt.Errorf("invalid $expand value: %w", err)
-		}
-		processedValues.Set("$expand", cleanedExpand)
-	}
-
-	// Processa valores $filter se presente
-	if filterValue, exists := systemParams["$filter"]; exists {
-		cleanedFilter, err := s.urlParser.ParseFilterValue(filterValue)
-		if err != nil {
-			return QueryOptions{}, fmt.Errorf("invalid $filter value: %w", err)
-		}
-		processedValues.Set("$filter", cleanedFilter)
-	}
-
-	// Parse das opções de consulta
-	return s.parser.ParseQueryOptions(processedValues)
-}
-
-// debugQueryParsing adiciona debug detalhado do parsing de query
-func (s *Server) debugQueryParsing(c fiber.Ctx) {
-	log.Printf("🔍 DEBUG Query Parsing:")
-	log.Printf("   Raw Query: %s", string(c.Request().URI().QueryString()))
-	log.Printf("   Standard Query: %v", c.Queries())
-
-	// Testa o parser customizado
-	customValues, err := s.urlParser.ParseQuery(string(c.Request().URI().QueryString()))
-	if err != nil {
-		log.Printf("   Custom Parser Error: %v", err)
-	} else {
-		log.Printf("   Custom Query: %v", customValues)
-	}
-
-	// Compara os resultados
-	log.Printf("   Differences:")
-	for key, vals := range customValues {
-		standardVal := c.Query(key)
-		if len(vals) > 0 && vals[0] != standardVal {
-			log.Printf("     %s: standard=%v, custom=%v", key, standardVal, vals)
-		}
-	}
 }
 
 // getCurrentProvider retorna o provider para o tenant atual
@@ -1771,4 +1739,200 @@ func (s *Server) handleTenantHealth(c fiber.Ctx) error {
 	}
 
 	return c.JSON(health)
+}
+
+// =================================================================================================
+// IMPLEMENTAÇÃO DOS METODOS PARA EXECUTAR O SERVIDOR COMO SERVIÇO
+// =================================================================================================
+
+// Run executa o servidor como serviço (usado pelo gerenciador de serviços)
+func (s *Server) run() error {
+	wrapper := &ServiceWrapper{server: s}
+	svc, err := service.New(wrapper, s.createServiceConfig())
+	if err != nil {
+		return fmt.Errorf("erro ao criar serviço: %w", err)
+	}
+
+	// Configura logger do serviço
+	s.serviceLogger, err = svc.Logger(nil)
+	if err != nil {
+		s.logger.Printf("Aviso: Não foi possível configurar logger do serviço: %v", err)
+	}
+
+	err = svc.Run()
+	if err != nil {
+		if s.serviceLogger != nil {
+			s.serviceLogger.Error(err)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// Stop para o servidor gracefully
+// Unifica StopService e Shutdown em um único método
+func (s *Server) Stop() error {
+	// Se está rodando como serviço, usa a lógica de serviço
+	if s.serviceCancel != nil {
+		if s.serviceLogger != nil {
+			s.serviceLogger.Info("⏹️ Parando serviço GoData...")
+		}
+
+		// Cancela o contexto para sinalizar shutdown
+		s.serviceCancel()
+
+		// Aguarda um tempo para shutdown graceful
+		time.Sleep(2 * time.Second)
+	}
+
+	// Para o servidor HTTP
+	return s.Shutdown()
+}
+
+// Restart reinicia o serviço do sistema
+func (s *Server) Restart() error {
+	wrapper := &ServiceWrapper{server: s}
+	svc, err := service.New(wrapper, s.createServiceConfig())
+	if err != nil {
+		return fmt.Errorf("erro ao criar serviço: %w", err)
+	}
+
+	s.logger.Printf("🔄 Reiniciando serviço '%s'...", s.config.Name)
+
+	// Para o serviço
+	if err := svc.Stop(); err != nil {
+		s.logger.Printf("Aviso: Erro ao parar serviço: %v", err)
+	}
+
+	// Aguarda um momento
+	time.Sleep(3 * time.Second)
+
+	// Inicia o serviço
+	if err := svc.Start(); err != nil {
+		return fmt.Errorf("erro ao iniciar serviço: %w", err)
+	}
+
+	s.logger.Printf("✅ Serviço '%s' reiniciado com sucesso!", s.config.Name)
+	return nil
+}
+
+// Status retorna o status do serviço do sistema
+func (s *Server) Status() (service.Status, error) {
+	wrapper := &ServiceWrapper{server: s}
+	svc, err := service.New(wrapper, s.createServiceConfig())
+	if err != nil {
+		return service.StatusUnknown, fmt.Errorf("erro ao criar serviço: %w", err)
+	}
+
+	status, err := svc.Status()
+	if err != nil {
+		return service.StatusUnknown, fmt.Errorf("erro ao verificar status: %w", err)
+	}
+
+	var statusText string
+	switch status {
+	case service.StatusRunning:
+		statusText = "🟢 Executando"
+	case service.StatusStopped:
+		statusText = "🔴 Parado"
+	case service.StatusUnknown:
+		statusText = "❓ Desconhecido"
+	default:
+		statusText = "❓ Status desconhecido"
+	}
+
+	s.logger.Printf("📊 Status do serviço '%s': %s", s.config.Name, statusText)
+	return status, nil
+}
+
+// Install instala o servidor como serviço do sistema
+func (s *Server) Install() error {
+	wrapper := &ServiceWrapper{server: s}
+	svc, err := service.New(wrapper, s.createServiceConfig())
+	if err != nil {
+		return fmt.Errorf("erro ao criar serviço: %w", err)
+	}
+
+	// Configura logger do serviço
+	s.serviceLogger, err = svc.Logger(nil)
+	if err != nil {
+		s.logger.Printf("Aviso: Não foi possível configurar logger do serviço: %v", err)
+	}
+
+	err = svc.Install()
+	if err != nil {
+		return fmt.Errorf("erro ao instalar serviço: %w", err)
+	}
+
+	s.logger.Printf("✅ Serviço '%s' instalado com sucesso!", s.config.Name)
+	return nil
+}
+
+// Uninstall remove o servidor como serviço do sistema
+func (s *Server) Uninstall() error {
+	wrapper := &ServiceWrapper{server: s}
+	svc, err := service.New(wrapper, s.createServiceConfig())
+	if err != nil {
+		return fmt.Errorf("erro ao criar serviço: %w", err)
+	}
+
+	// Tenta parar o serviço antes de desinstalar
+	if status, _ := svc.Status(); status == service.StatusRunning {
+		s.logger.Println("⏹️ Parando serviço antes de desinstalar...")
+		if err := svc.Stop(); err != nil {
+			s.logger.Printf("Aviso: Erro ao parar serviço: %v", err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	err = svc.Uninstall()
+	if err != nil {
+		return fmt.Errorf("erro ao desinstalar serviço: %w", err)
+	}
+
+	s.logger.Printf("✅ Serviço '%s' removido com sucesso!", s.config.Name)
+	return nil
+}
+
+// createServiceConfig cria a configuração do serviço baseada na configuração do servidor
+func (s *Server) createServiceConfig() *service.Config {
+	svcConfig := &service.Config{
+		Name:        s.config.Name,
+		DisplayName: s.config.DisplayName,
+		Description: s.config.Description,
+		Arguments:   []string{"run"},
+	}
+
+	// Adiciona configurações específicas por plataforma
+	if runtime.GOOS == "windows" {
+		svcConfig.Dependencies = []string{
+			"Tcpip",
+			"Dhcp",
+		}
+		svcConfig.Option = service.KeyValue{
+			"StartType":              "automatic",
+			"OnFailure":              "restart",
+			"OnFailureDelayDuration": "5s",
+			"OnFailureResetPeriod":   10,
+		}
+	} else {
+		// Linux/Unix
+		svcConfig.Dependencies = []string{
+			"Requires=network.target",
+			"After=network-online.target syslog.target",
+		}
+		svcConfig.Option = service.KeyValue{
+			"Restart":        "always",
+			"RestartSec":     "5",
+			"User":           "godata",
+			"Group":          "godata",
+			"LimitNOFILE":    "65536",
+			"Type":           "notify",
+			"KillMode":       "mixed",
+			"TimeoutStopSec": "30",
+		}
+	}
+
+	return svcConfig
 }

@@ -47,7 +47,7 @@ func (p *MultiTenantProviderPool) InitializeProviders() error {
 		}
 
 		p.providers[tenantID] = provider
-		p.logger.Printf("✅ Provider inicializado para tenant %s: %s", tenantID, tenantConfig.DBType)
+		p.logger.Printf("✅ Provider inicializado para tenant %s: %s", tenantID, tenantConfig.DBDriver)
 	}
 
 	return nil
@@ -71,7 +71,7 @@ func (p *MultiTenantProviderPool) GetProvider(tenantID string) DatabaseProvider 
 
 // createTenantProvider cria um provider específico para um tenant
 func (p *MultiTenantProviderPool) createTenantProvider(config *TenantConfig) (DatabaseProvider, error) {
-	if factory, exists := providerRegistry[config.DBType]; exists {
+	if factory, exists := providerRegistry[config.DBDriver]; exists {
 		provider := factory()
 
 		// Configura a conexão específica do tenant
@@ -92,13 +92,13 @@ func (p *MultiTenantProviderPool) createTenantProvider(config *TenantConfig) (Da
 			}
 		} else {
 			// Se não suporta configuração dinâmica, tenta métodos alternativos
-			p.logger.Printf("⚠️ Provider %s não suporta configuração dinâmica para tenant %s", config.DBType, config.TenantID)
+			p.logger.Printf("⚠️ Provider %s não suporta configuração dinâmica para tenant %s", config.DBDriver, config.TenantID)
 		}
 
 		return provider, nil
 	}
 
-	return nil, fmt.Errorf("provider não registrado para tipo: %s", config.DBType)
+	return nil, fmt.Errorf("provider não registrado para tipo: %s", config.DBDriver)
 }
 
 // AddTenant adiciona um novo tenant dinamicamente
@@ -113,7 +113,7 @@ func (p *MultiTenantProviderPool) AddTenant(tenantID string, config *TenantConfi
 
 	p.providers[tenantID] = provider
 	p.config.Tenants[tenantID] = config
-	p.logger.Printf("✅ Tenant %s adicionado dinamicamente: %s", tenantID, config.DBType)
+	p.logger.Printf("✅ Tenant %s adicionado dinamicamente: %s", tenantID, config.DBDriver)
 
 	return nil
 }

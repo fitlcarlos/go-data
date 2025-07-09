@@ -10,7 +10,7 @@ import (
 // TenantConfig representa configurações específicas de um tenant
 type TenantConfig struct {
 	TenantID           string
-	DBType             string
+	DBDriver           string
 	DBHost             string
 	DBPort             string
 	DBName             string
@@ -44,7 +44,7 @@ func (tc *TenantConfig) BuildConnectionString() string {
 		return tc.DBConnectionString
 	}
 
-	switch tc.DBType {
+	switch tc.DBDriver {
 	case "oracle":
 		return fmt.Sprintf("oracle://%s:%s@%s:%s/%s",
 			tc.DBUser, tc.DBPassword, tc.DBHost, tc.DBPort, tc.DBName)
@@ -112,8 +112,8 @@ func (c *EnvConfig) parseMultiTenantVariables() *MultiTenantConfig {
 
 				tenant := multiTenant.Tenants[tenantID]
 				switch dbConfigKey {
-				case "DB_TYPE":
-					tenant.DBType = value
+				case "DB_DRIVER":
+					tenant.DBDriver = value
 				case "DB_HOST":
 					tenant.DBHost = value
 				case "DB_PORT":
@@ -195,7 +195,7 @@ func (mtc *MultiTenantConfig) PrintMultiTenantConfig() {
 
 		for tenantID, config := range mtc.Tenants {
 			fmt.Printf("     - %s: %s://%s:%s/%s\n",
-				tenantID, config.DBType, config.DBHost, config.DBPort, config.DBName)
+				tenantID, config.DBDriver, config.DBHost, config.DBPort, config.DBName)
 		}
 	} else {
 		fmt.Println("   Single-tenant mode")

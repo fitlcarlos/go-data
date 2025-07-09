@@ -86,6 +86,15 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - Valores padrão sensatos quando `.env` não encontrado
 - Configuração completa de banco de dados, servidor, TLS e JWT
 
+### 🔧 **Execução como Serviço (Kardianos)**
+- Integração transparente usando biblioteca [kardianos/service](https://github.com/kardianos/service)
+- Suporte completo a Windows Service, systemd (Linux) e launchd (macOS)
+- Métodos unificados: `Install()`, `Start()`, `Stop()`, `Restart()`, `Status()`, `Uninstall()`
+- Detecção automática de contexto de execução (serviço vs. modo normal)
+- Shutdown graceful e auto-restart em caso de falha
+- Logging integrado com Event Log/journalctl/Console nativo
+- Configuração automática por plataforma com dependências específicas
+
 ## 🚀 Instalação
 
 ```bash
@@ -142,6 +151,11 @@ JWT_REFRESH_IN=24h
 JWT_ALGORITHM=HS256
 JWT_REQUIRE_AUTH=false
 
+# Configurações do Serviço
+SERVICE_NAME=godata-service
+SERVICE_DISPLAY_NAME=GoData OData Service
+SERVICE_DESCRIPTION=Serviço GoData OData v4 para APIs RESTful
+
 # Configurações Multi-Tenant
 MULTI_TENANT_ENABLED=false
 TENANT_IDENTIFICATION_MODE=header
@@ -149,7 +163,7 @@ TENANT_HEADER_NAME=X-Tenant-ID
 DEFAULT_TENANT=default
 
 # Configurações específicas por tenant (exemplo)
-TENANT_EMPRESA_A_DB_TYPE=postgresql
+TENANT_EMPRESA_A_DB_DRIVER=postgresql
 TENANT_EMPRESA_A_DB_HOST=localhost
 TENANT_EMPRESA_A_DB_PORT=5432
 TENANT_EMPRESA_A_DB_NAME=empresa_a
@@ -202,12 +216,17 @@ TENANT_EMPRESA_A_DB_PASSWORD=password_a
 - **JWT_ALGORITHM**: Algoritmo de assinatura JWT (padrão: HS256)
 - **JWT_REQUIRE_AUTH**: Requer autenticação para todas as rotas (padrão: false)
 
+#### Configurações do Serviço
+- **SERVICE_NAME**: Nome do serviço (padrão: godata-service)
+- **SERVICE_DISPLAY_NAME**: Nome de exibição do serviço (padrão: GoData OData Service)
+- **SERVICE_DESCRIPTION**: Descrição do serviço (padrão: Serviço GoData OData v4 para APIs RESTful)
+
 #### Configurações Multi-Tenant
 - **MULTI_TENANT_ENABLED**: Habilita suporte multi-tenant (padrão: false)
 - **TENANT_IDENTIFICATION_MODE**: Método de identificação do tenant (header, subdomain, path, jwt)
 - **TENANT_HEADER_NAME**: Nome do header para identificação (padrão: X-Tenant-ID)
 - **DEFAULT_TENANT**: Nome do tenant padrão (padrão: default)
-- **TENANT_[NOME]_DB_TYPE**: Tipo de banco para tenant específico
+- **TENANT_[NOME]_DB_DRIVER**: Tipo de banco para tenant específico
 - **TENANT_[NOME]_DB_HOST**: Host do banco para tenant específico
 - **TENANT_[NOME]_DB_PORT**: Porta do banco para tenant específico
 - **TENANT_[NOME]_DB_NAME**: Nome do banco para tenant específico
@@ -278,14 +297,14 @@ TENANT_HEADER_NAME=X-Tenant-ID
 DEFAULT_TENANT=default
 
 # Configurações por tenant
-TENANT_EMPRESA_A_DB_TYPE=postgresql
+TENANT_EMPRESA_A_DB_DRIVER=postgresql
 TENANT_EMPRESA_A_DB_HOST=postgres-a.empresa.com
 TENANT_EMPRESA_A_DB_PORT=5432
 TENANT_EMPRESA_A_DB_NAME=empresa_a
 TENANT_EMPRESA_A_DB_USER=user_a
 TENANT_EMPRESA_A_DB_PASSWORD=password_a
 
-TENANT_EMPRESA_B_DB_TYPE=mysql
+TENANT_EMPRESA_B_DB_DRIVER=mysql
 TENANT_EMPRESA_B_DB_HOST=mysql-b.empresa.com
 TENANT_EMPRESA_B_DB_PORT=3306
 TENANT_EMPRESA_B_DB_NAME=empresa_b
@@ -712,21 +731,21 @@ DB_USER=system
 DB_PASSWORD=password
 
 # Configuração específica por tenant
-TENANT_EMPRESA_A_DB_TYPE=oracle
+TENANT_EMPRESA_A_DB_DRIVER=oracle
 TENANT_EMPRESA_A_DB_HOST=oracle1.empresa.com
 TENANT_EMPRESA_A_DB_PORT=1521
 TENANT_EMPRESA_A_DB_NAME=EMPRESA_A
 TENANT_EMPRESA_A_DB_USER=user_a
 TENANT_EMPRESA_A_DB_PASSWORD=password_a
 
-TENANT_EMPRESA_B_DB_TYPE=postgres
+TENANT_EMPRESA_B_DB_DRIVER=postgres
 TENANT_EMPRESA_B_DB_HOST=postgres1.empresa.com
 TENANT_EMPRESA_B_DB_PORT=5432
 TENANT_EMPRESA_B_DB_NAME=empresa_b
 TENANT_EMPRESA_B_DB_USER=user_b
 TENANT_EMPRESA_B_DB_PASSWORD=password_b
 
-TENANT_EMPRESA_C_DB_TYPE=mysql
+TENANT_EMPRESA_C_DB_DRIVER=mysql
 TENANT_EMPRESA_C_DB_HOST=mysql1.empresa.com
 TENANT_EMPRESA_C_DB_PORT=3306
 TENANT_EMPRESA_C_DB_NAME=empresa_c
@@ -897,7 +916,7 @@ type Cliente struct {
 Para adicionar um novo tenant, basta incluir no `.env`:
 
 ```env
-TENANT_NOVO_CLIENTE_DB_TYPE=mysql
+TENANT_NOVO_CLIENTE_DB_DRIVER=mysql
 TENANT_NOVO_CLIENTE_DB_HOST=mysql.novocliente.com
 TENANT_NOVO_CLIENTE_DB_PORT=3306
 TENANT_NOVO_CLIENTE_DB_NAME=novo_cliente
@@ -1700,6 +1719,315 @@ GET /odata/Users?$search=João
 | `nullable.String` | `Edm.String` | `VARCHAR NULL`
 | `nullable.Time` | `Edm.DateTimeOffset` | `TIMESTAMP NULL` |
 
+## 🔧 Execução como Serviço
+
+O GoData possui funcionalidade de serviço **integrada transparentemente** usando a biblioteca [kardianos/service](https://github.com/kardianos/service), permitindo execução como serviço nativo no Windows, Linux e macOS sem necessidade de executáveis separados.
+
+### 🎯 Biblioteca Kardianos Service
+
+O GoData utiliza a biblioteca `github.com/kardianos/service` que oferece:
+
+- **Multi-plataforma**: Windows Service, systemd (Linux), launchd (macOS)
+- **Interface unificada**: Mesma API para todas as plataformas
+- **Logging integrado**: Logs direcionados para Event Log/journalctl/Console
+- **Configuração automática**: Dependências e configurações específicas por plataforma
+- **Controle de ciclo de vida**: Install, start, stop, restart, uninstall
+
+### 🚀 Como Usar
+
+A funcionalidade de serviço está disponível através de métodos do próprio servidor GoData:
+
+```go
+package main
+
+import (
+    "log"
+    "github.com/fitlcarlos/go-data/pkg/odata"
+)
+
+func main() {
+    // Criar servidor (carrega automaticamente configurações do .env)
+    server := odata.NewServer()
+    
+    // Registrar entidades
+    server.RegisterEntity("Users", User{})
+    
+    // Instalar como serviço
+    if err := server.Install(); err != nil {
+        log.Fatal("Erro ao instalar:", err)
+    }
+    
+    // Iniciar serviço  
+    if err := server.Start(); err != nil {
+        log.Fatal("Erro ao iniciar:", err)
+    }
+}
+```
+
+### 📋 Métodos Disponíveis
+
+```go
+// Gerenciamento de serviço (kardianos/service)
+server.Install() error           // Instala como serviço do sistema
+server.Uninstall() error         // Remove o serviço
+server.Start() error             // Inicia (detecta automaticamente se é serviço ou normal)
+server.Stop() error              // Para o serviço gracefully
+server.Restart() error           // Reinicia o serviço
+server.Status() (service.Status, error) // Verifica status do serviço
+
+// Métodos auxiliares
+server.IsRunningAsService() bool  // Detecta se está executando como serviço
+server.Shutdown() error          // Para apenas o servidor HTTP
+```
+
+### 🔍 Detecção Automática de Serviço
+
+O método `Start()` detecta automaticamente se deve executar como serviço através de:
+
+1. **Argumentos de linha de comando**:
+   ```bash
+   ./app run          # Força execução como serviço
+   ./app --service    # Força execução como serviço  
+   ./app -service     # Força execução como serviço
+   ```
+
+2. **Variável de ambiente**:
+   ```bash
+   export GODATA_RUN_AS_SERVICE=true
+   ./app
+   ```
+
+3. **Contexto do sistema**:
+   - **Windows**: Detecta execução pelo SCM (Service Control Manager)
+   - **Linux**: Detecta `INVOCATION_ID` (systemd) ou `PPID=1`
+   - **macOS**: Detecta contexto de execução do launchd
+
+### ⚙️ Configuração do Serviço
+
+```go
+// Configuração automática via .env
+server := odata.NewServer()
+
+// As configurações do serviço são carregadas automaticamente do .env:
+// SERVICE_NAME=godata-prod
+// SERVICE_DISPLAY_NAME=GoData Production  
+// SERVICE_DESCRIPTION=Servidor GoData OData
+// SERVER_HOST=0.0.0.0
+// SERVER_PORT=8080
+
+// Instalar e iniciar
+server.Install()
+server.Start()
+```
+
+### 🔧 Sobrescrevendo Configurações (Opcional)
+
+Se necessário, ainda é possível sobrescrever as configurações carregadas do .env:
+
+```go
+server := odata.NewServer()
+
+// Sobrescrever apenas se necessário
+config := server.GetConfig()
+config.Name = "godata-customizado"
+config.DisplayName = "GoData Personalizado"
+config.Description = "Configuração personalizada"
+
+server.Install()
+server.Start()
+```
+
+### 🏗️ Configurações Automáticas por Plataforma (Kardianos)
+
+O GoData configura automaticamente o serviço com otimizações específicas para cada plataforma:
+
+#### Windows Service
+```
+StartType: Automatic
+Dependencies: Tcpip, Dhcp
+OnFailure: Restart
+OnFailureDelayDuration: 5s
+OnFailureResetPeriod: 10
+```
+
+#### Linux systemd
+```
+[Unit]
+Requires=network.target
+After=network-online.target syslog.target
+
+[Service]
+Type=notify
+Restart=always
+RestartSec=5
+User=godata
+Group=godata
+LimitNOFILE=65536
+KillMode=mixed
+TimeoutStopSec=30
+```
+
+#### macOS launchd
+Configuração automática com propriedades adequadas para execução em background.
+
+### 🎯 Exemplo Prático
+
+Veja o exemplo completo em [`examples/service/`](examples/service/) que demonstra:
+
+- Como usar os métodos de serviço integrados
+- Configuração personalizada de serviço
+- Gerenciamento via linha de comando
+- Entidades de exemplo (Users e Products)
+
+### 📊 Monitoramento e Logs (Kardianos)
+
+O kardianos/service integra automaticamente com os sistemas de log nativos:
+
+#### Linux (systemd + journalctl)
+```bash
+# Status detalhado (use o nome configurado no server.config.Name)
+sudo systemctl status meu-godata-service
+
+# Logs em tempo real (integrados via kardianos)
+sudo journalctl -u meu-godata-service -f
+
+# Logs específicos do GoData
+sudo journalctl -u meu-godata-service --since "1 hour ago"
+```
+
+#### Windows (Event Log)
+```cmd
+# Gerenciador de Serviços (procurar pelo DisplayName)
+services.msc
+
+# PowerShell (usar o Name configurado)
+Get-Service meu-godata-service
+
+# Event Viewer - logs integrados via kardianos
+eventvwr.msc
+# Navegar: Windows Logs > Application > Source = "meu-godata-service"
+```
+
+#### macOS (Console)
+```bash
+# Console.app para logs do sistema
+# ou via linha de comando:
+log stream --predicate 'subsystem == "meu-godata-service"'
+```
+
+### 🔒 Configuração de Produção
+
+```env
+# Arquivo .env para produção
+SERVICE_NAME=godata-prod
+SERVICE_DISPLAY_NAME=GoData Production Service
+SERVICE_DESCRIPTION=Servidor GoData OData v4 - Produção
+
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8080
+SERVER_ENABLE_CORS=true
+SERVER_ALLOWED_ORIGINS=https://meuapp.com
+SERVER_TLS_CERT_FILE=/etc/ssl/certs/server.crt
+SERVER_TLS_KEY_FILE=/etc/ssl/private/server.key
+
+JWT_ENABLED=true
+JWT_REQUIRE_AUTH=true
+JWT_SECRET_KEY=minha-chave-super-secreta-de-producao
+```
+
+```go
+// Configuração para produção com kardianos/service
+server := odata.NewServer()  // Carrega automaticamente do .env
+
+// Instalar e configurar o serviço
+log.Fatal(server.Install())  // Instala via kardianos
+log.Fatal(server.Start())    // Inicia com detecção automática
+```
+
+### 📚 Integração com CI/CD
+
+#### Script de Deploy Automatizado
+
+```bash
+#!/bin/bash
+# deploy-godata.sh
+
+set -e
+
+# Configurações
+SERVICE_NAME="godata"
+INSTALL_DIR="/opt/godata"
+
+echo "🚀 Iniciando deploy do GoData Service..."
+
+# Parar serviço se estiver rodando
+if systemctl is-active --quiet $SERVICE_NAME; then
+    echo "⏹️ Parando serviço..."
+    sudo systemctl stop $SERVICE_NAME
+fi
+
+# Fazer backup do executável atual
+if [ -f "$INSTALL_DIR/godata" ]; then
+    sudo cp "$INSTALL_DIR/godata" "$INSTALL_DIR/godata.backup"
+fi
+
+# Copiar novo executável
+sudo cp ./godata $INSTALL_DIR/
+sudo chown godata:godata $INSTALL_DIR/godata
+sudo chmod +x $INSTALL_DIR/godata
+
+# Instalar/atualizar serviço
+sudo $INSTALL_DIR/godata install
+
+# Iniciar serviço
+sudo systemctl start $SERVICE_NAME
+sudo systemctl enable $SERVICE_NAME
+
+# Verificar status
+sleep 2
+if systemctl is-active --quiet $SERVICE_NAME; then
+    echo "✅ Deploy concluído com sucesso!"
+    sudo systemctl status $SERVICE_NAME
+else
+    echo "❌ Erro no deploy!"
+    exit 1
+fi
+```
+
+#### GitHub Actions Workflow
+
+```yaml
+name: Deploy GoData Service
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Build Service
+      run: make build-all
+    
+    - name: Deploy to Production
+      run: |
+        # Copiar binário para servidor
+        scp build/godata-linux-amd64 user@server:/tmp/godata
+        
+        # Executar deploy no servidor
+        ssh user@server 'sudo /tmp/deploy-godata.sh'
+```
+
+Para um exemplo completo de uso, consulte: [`examples/service/`](examples/service/)
+
 ## 🤝 Contribuindo
 
 Contribuições são bem-vindas! Por favor:
@@ -1726,6 +2054,7 @@ Exemplo completo demonstrando:
 - Múltiplos métodos de identificação de tenant
 - Endpoints de gerenciamento e monitoramento
 - Diferentes tipos de banco por tenant
+- Arquivo .env completo com configurações multi-tenant
 
 ### 🔐 [JWT Authentication](examples/jwt/)
 Demonstra sistema completo de autenticação:
@@ -1733,6 +2062,7 @@ Demonstra sistema completo de autenticação:
 - Endpoints de login, refresh e logout
 - Controle de acesso por entidade
 - Middleware de autenticação
+- Arquivo .env com JWT habilitado
 
 ### 🎯 [Events](examples/events/)
 Sistema completo de eventos:
@@ -1740,18 +2070,30 @@ Sistema completo de eventos:
 - Auditoria e logging
 - Cancelamento de operações
 - Controle de acesso baseado em contexto
+- Arquivo .env com configurações para eventos
+
+### 🔧 [Service](examples/service/)
+Execução como serviço do sistema:
+- Funcionalidade kardianos/service integrada
+- Gerenciamento multi-plataforma (Windows/Linux/macOS)
+- Detecção automática de contexto de execução
+- Configuração de serviço personalizada
+- Logging integrado com sistemas nativos
+- Arquivo .env completo com configurações de serviço
 
 ### 📊 [Básico](examples/basic/)
 Exemplo básico de uso:
 - Configuração simples
 - Entidades e relacionamentos
 - Operações CRUD
+- Arquivo .env com configurações básicas
 
 ### 🚀 [Avançado](examples/advanced/)
 Funcionalidades avançadas:
 - Configurações personalizadas
 - Mapeamento complexo
 - Relacionamentos N:N
+- Arquivo .env com configurações de produção
 
 ## 📚 Referências
 [![Go Reference](https://pkg.go.dev/badge/github.com/fitlcarlos/go-data.svg)](https://pkg.go.dev/github.com/fitlcarlos/go-data)

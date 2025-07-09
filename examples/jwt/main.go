@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -189,7 +188,7 @@ func main() {
 
 	// Iniciar servidor
 	log.Println("🚀 Servidor iniciado com configurações automaticamente carregadas")
-	if err := server.StartWithContext(context.Background()); err != nil {
+	if err := server.Start(); err != nil {
 		log.Fatal("Erro ao iniciar servidor:", err)
 	}
 }

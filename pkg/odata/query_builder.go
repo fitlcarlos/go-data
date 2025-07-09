@@ -92,8 +92,8 @@ func NewQueryBuilder(dialect string) *QueryBuilder {
 	return qb
 }
 
-// setupMySQLMaps configura mapas para MySQL
-func (qb *QueryBuilder) setupMySQLMaps() {
+// setupDefaultMaps configura mapas padrão
+func (qb *QueryBuilder) setupDefaultMaps() {
 	// Operadores de comparação
 	qb.nodeMap["eq"] = "(%s = %s)"
 	qb.nodeMap["ne"] = "(%s != %s)"
@@ -151,10 +151,15 @@ func (qb *QueryBuilder) setupMySQLMaps() {
 	qb.prepareMap["endswith"] = "%%%s"
 }
 
+// setupMySQLMaps configura mapas para MySQL
+func (qb *QueryBuilder) setupMySQLMaps() {
+	qb.setupDefaultMaps() // Usa Default como padrão
+}
+
 // setupPostgreSQLMaps configura mapas para PostgreSQL
 func (qb *QueryBuilder) setupPostgreSQLMaps() {
-	// Herda configuração MySQL e sobrescreve diferenças
-	qb.setupMySQLMaps()
+	// Herda configuração Default e sobrescreve diferenças
+	qb.setupDefaultMaps()
 
 	// Diferenças específicas do PostgreSQL
 	qb.nodeMap["mod"] = "(%s %% %s)"
@@ -167,8 +172,8 @@ func (qb *QueryBuilder) setupPostgreSQLMaps() {
 
 // setupOracleMaps configura mapas para Oracle
 func (qb *QueryBuilder) setupOracleMaps() {
-	// Herda configuração MySQL e sobrescreve diferenças
-	qb.setupMySQLMaps()
+	// Herda configuração Default e sobrescreve diferenças
+	qb.setupDefaultMaps()
 
 	// Diferenças específicas do Oracle
 	qb.nodeMap["mod"] = "MOD(%s, %s)"
@@ -177,11 +182,6 @@ func (qb *QueryBuilder) setupOracleMaps() {
 	qb.nodeMap["now"] = "SYSDATE"
 	qb.nodeMap["ceiling"] = "CEIL(%s)"
 	qb.nodeMap["length"] = "LENGTH(%s)"
-}
-
-// setupDefaultMaps configura mapas padrão
-func (qb *QueryBuilder) setupDefaultMaps() {
-	qb.setupMySQLMaps() // Usa MySQL como padrão
 }
 
 // BuildWhereClause constrói cláusula WHERE a partir de árvore de parse

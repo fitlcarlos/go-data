@@ -211,7 +211,6 @@ func (s *BaseEntityService) Get(ctx context.Context, keys map[string]any) (any, 
 
 	options := QueryOptions{
 		Filter: filterQuery,
-		// Top: removido para evitar subquery desnecessária no Oracle
 	}
 
 	log.Printf("🔍 BaseEntityService.Get - Options: %+v", options)

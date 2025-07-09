@@ -173,7 +173,7 @@ func (s *Server) TenantInfo() fiber.Handler {
 		if s.multiTenantConfig != nil && s.multiTenantConfig.Enabled {
 			if tenantConfig := s.multiTenantConfig.GetTenantConfig(tenantID); tenantConfig != nil {
 				c.Locals("tenant_config", tenantConfig)
-				c.Locals("tenant_db_type", tenantConfig.DBType)
+				c.Locals("tenant_db_driver", tenantConfig.DBDriver)
 				c.Locals("tenant_db_host", tenantConfig.DBHost)
 			}
 		}
