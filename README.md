@@ -9,8 +9,10 @@ Uma biblioteca Go completa para implementar APIs OData v4 com resposta JSON e su
 - **Múltiplos Bancos**: Suporte para PostgreSQL, Oracle e MySQL
 - **Mapeamento Automático**: Sistema de mapeamento baseado em tags de struct
 - **Tipos Nullable**: Suporte completo a valores null
-- **Relacionamentos**: Suporte a foreign keys e navegação entre entidades
+- **Relacionamentos Bidirecionais**: Suporte a association e manyAssociation
 - **Consultas Avançadas**: Filtros, ordenação, paginação e seleção de campos
+- **Campos Computados**: Suporte a $compute para cálculos em tempo real
+- **Busca Textual**: Suporte a $search para busca em texto
 - **Geração de Metadados**: Metadados JSON automáticos
 - **Testes Unitários**: Cobertura completa de testes
 
@@ -24,67 +26,182 @@ go get github.com/godata/odata
 
 ### Sistema de Tags
 
-O GoData utiliza um sistema de tags de struct para definir metadados automaticamente:
+O GoData utiliza um sistema avançado de tags de struct para definir metadados automaticamente:
 
 ```go
 type User struct {
-    ID      int64           `json:"id" column:"id" odata:"not null" primaryKey:"idGenerator:sequence;name=seq_user_id"`
-    Nome    string          `json:"nome" column:"nome" odata:"not null; length:100"`
-    Email   string          `json:"email" column:"email" odata:"not null; length:255"`
-    Idade   nullable.Int64  `json:"idade" column:"idade"`
-    Ativo   bool            `json:"ativo" column:"ativo" odata:"not null; default"`
-    DtInc   time.Time       `json:"dt_inc" column:"dt_inc" odata:"not null; default"`
-    DtAlt   nullable.Time   `json:"dt_alt" column:"dt_alt"`
-    Salario nullable.Float64 `json:"salario" column:"salario" odata:"precision:10; scale:2"`
+    TableName string           `table:"users;schema=public"`
+    ID        int64            `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_user_id"`
+    Nome      string           `json:"nome" column:"nome" prop:"[required, Unique]; length:100"`
+    Email     string           `json:"email" column:"email" prop:"[required, Unique]; length:255"`
+    Idade     nullable.Int64   `json:"idade" column:"idade"`
+    Ativo     bool             `json:"ativo" column:"ativo" prop:"[required]; default"`
+    DtInc     time.Time        `json:"dt_inc" column:"dt_inc" prop:"[required, NoUpdate]; default"`
+    DtAlt     nullable.Time    `json:"dt_alt" column:"dt_alt"`
+    Salario   nullable.Float64 `json:"salario" column:"salario" prop:"precision:10; scale:2"`
+    
+    // Relacionamentos
+    Orders []Order `json:"Orders" manyAssociation:"foreignKey:user_id; references:id" cascade:"[SaveUpdate, Remove, Refresh, RemoveOrphan]"`
 }
 ```
 
 ### Tags Disponíveis
 
+#### Tag `table`
+Define o nome da tabela e schema no banco de dados:
+```go
+TableName string `table:"users;schema=public"`
+TableName string `table:"fab_operacao;schema=nbs"`
+```
+
 #### Tag `json`
 Define o nome do campo na serialização JSON:
 ```go
 Nome string `json:"nome"`
+Email string `json:"email"`
 ```
 
 #### Tag `column`
 Define o nome da coluna no banco de dados:
 ```go
 Nome string `column:"nome"`
+Email string `column:"email"`
 ```
 
-#### Tag `odata`
-Define atributos OData específicos:
+#### Tag `prop`
+Define propriedades avançadas do campo:
 ```go
-// Exemplos de atributos odata:
-`odata:"not null"`           // Campo obrigatório
-`odata:"null"`               // Campo opcional
-`odata:"default"`            // Possui valor padrão
-`odata:"length:100"`         // Tamanho máximo
-`odata:"precision:10; scale:2"` // Precisão e escala para decimais
+// Flags disponíveis: required, NoInsert, NoUpdate, Unique, Lazy
+ID    int64  `prop:"[required]"`                    // Campo obrigatório
+Nome  string `prop:"[required, Unique]; length:100"` // Obrigatório e único
+DtInc time.Time `prop:"[required, NoUpdate]; default"` // Não pode ser alterado
+Email string `prop:"[required, Unique]; length:255"` // Obrigatório e único
 ```
 
 #### Tag `primaryKey`
 Define chaves primárias e geradores de ID:
 ```go
-// Chave primária sem gerador automático
-`primaryKey:"idGenerator:none"`
-
-// Chave primária com sequência
-`primaryKey:"idGenerator:sequence;name=seq_user_id"`
-
-// Chave primária com auto incremento
-`primaryKey:"idGenerator:identity"`
+// Tipos de geradores disponíveis: none, sequence, identity, guid, uuid38, uuid36, uuid32, smartGuid
+`primaryKey:"idGenerator:none"`                    // Sem gerador automático
+`primaryKey:"idGenerator:sequence;name=seq_user_id"` // Sequência Oracle/PostgreSQL
+`primaryKey:"idGenerator:identity"`                // Auto incremento MySQL
+`primaryKey:"idGenerator:guid"`                    // GUID
+`primaryKey:"idGenerator:uuid36"`                  // UUID 36 caracteres
+`primaryKey:"idGenerator:uuid32"`                  // UUID 32 caracteres
+`primaryKey:"idGenerator:smartGuid"`               // Smart GUID otimizado
 ```
 
-#### Tag `foreignKey`
-Define relacionamentos entre entidades:
+#### Tag `association`
+Define relacionamentos simples (1:1 ou N:1):
 ```go
-// Relacionamento simples
-MenuPai Menu `foreignKey:"id_parent;references:id"`
+// Relacionamento N:1 (muitos para um)
+User *User `json:"User" association:"foreignKey:user_id; references:id"`
+```
 
-// Relacionamento com ações em cascade
-MenuPermissao []MenuPermissao `foreignKey:"id_menu;references:id;OnDelete:CASCADE"`
+#### Tag `manyAssociation`
+Define relacionamentos múltiplos (1:N ou N:N):
+```go
+// Relacionamento 1:N (um para muitos)
+Orders []Order `json:"Orders" manyAssociation:"foreignKey:user_id; references:id"`
+
+// Relacionamento N:N com tabela de junção
+Tags []Tag `json:"Tags" manyAssociation:"foreignKey:post_id; references:id; joinTable:post_tags; joinColumn:post_id; inverseJoinColumn:tag_id"`
+```
+
+#### Tag `cascade`
+Define ações em cascata para relacionamentos:
+```go
+// Flags disponíveis: SaveUpdate, Remove, Refresh, RemoveOrphan
+`cascade:"[SaveUpdate, Remove, Refresh, RemoveOrphan]"`
+`cascade:"[SaveUpdate, Refresh]"`
+```
+
+### Relacionamentos Bidirecionais
+
+O GoData suporta relacionamentos bidirecionais usando `association` e `manyAssociation`:
+
+```go
+// Entidade User (lado 1)
+type User struct {
+    TableName string    `table:"users;schema=public"`
+    ID        int64     `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_user_id"`
+    Nome      string    `json:"nome" column:"nome" prop:"[required]; length:100"`
+    Email     string    `json:"email" column:"email" prop:"[required, Unique]; length:255"`
+    Ativo     bool      `json:"ativo" column:"ativo" prop:"[required]; default"`
+    DtInc     time.Time `json:"dt_inc" column:"dt_inc" prop:"[required, NoUpdate]; default"`
+    
+    // Relacionamento 1:N - Um usuário tem muitos pedidos
+    Orders []Order `json:"Orders" manyAssociation:"foreignKey:user_id; references:id" cascade:"[SaveUpdate, Remove, Refresh, RemoveOrphan]"`
+}
+
+// Entidade Order (lado N)
+type Order struct {
+    TableName string    `table:"orders;schema=public"`
+    ID        int64     `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_order_id"`
+    UserID    int64     `json:"user_id" column:"user_id" prop:"[required]"`
+    Total     float64   `json:"total" column:"total" prop:"[required]; precision:10; scale:2"`
+    DtPedido  time.Time `json:"dt_pedido" column:"dt_pedido" prop:"[required]"`
+    
+    // Relacionamento N:1 - Muitos pedidos pertencem a um usuário
+    User  *User       `json:"User" association:"foreignKey:user_id; references:id" cascade:"[SaveUpdate, Refresh]"`
+    // Relacionamento 1:N - Um pedido tem muitos itens
+    Items []OrderItem `json:"Items" manyAssociation:"foreignKey:order_id; references:id" cascade:"[SaveUpdate, Remove, Refresh, RemoveOrphan]"`
+}
+
+// Entidade OrderItem (lado N)
+type OrderItem struct {
+    TableName string `table:"order_items;schema=public"`
+    ID        int64  `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_order_item_id"`
+    OrderID   int64  `json:"order_id" column:"order_id" prop:"[required, NoUpdate]"`
+    ProductID int64  `json:"product_id" column:"product_id" prop:"[required]"`
+    Quantity  int32  `json:"quantity" column:"quantity" prop:"[required]"`
+    Price     float64 `json:"price" column:"price" prop:"[required]; precision:8; scale:2"`
+    
+    // Relacionamentos N:1 
+    Order   *Order   `json:"Order" association:"foreignKey:order_id; references:id" cascade:"[SaveUpdate, Refresh]"`
+    Product *Product `json:"Product" association:"foreignKey:product_id; references:id" cascade:"[SaveUpdate, Refresh]"`
+}
+
+// Entidade Product
+type Product struct {
+    TableName string           `table:"products;schema=public"`
+    ID        int64            `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_product_id"`
+    Nome      string           `json:"nome" column:"nome" prop:"[required]; length:100"`
+    Descricao nullable.String  `json:"descricao" column:"descricao" prop:"length:500"`
+    Preco     float64          `json:"preco" column:"preco" prop:"[required]; precision:8; scale:2"`
+    Ativo     bool             `json:"ativo" column:"ativo" prop:"[required]; default"`
+    
+    // Relacionamento 1:N - Um produto pode estar em muitos itens de pedido
+    OrderItems []OrderItem `json:"OrderItems" manyAssociation:"foreignKey:product_id; references:id" cascade:"[SaveUpdate, Refresh]"`
+}
+```
+
+### Relacionamentos N:N com Tabela de Junção
+
+Para relacionamentos muitos-para-muitos, use a tabela de junção:
+
+```go
+// Entidade Post
+type Post struct {
+    TableName string `table:"posts;schema=public"`
+    ID        int64  `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_post_id"`
+    Title     string `json:"title" column:"title" prop:"[required]; length:200"`
+    Content   string `json:"content" column:"content" prop:"[required]"`
+    
+    // Relacionamento N:N - Posts podem ter muitas tags
+    Tags []Tag `json:"Tags" manyAssociation:"foreignKey:post_id; references:id; joinTable:post_tags; joinColumn:post_id; inverseJoinColumn:tag_id" cascade:"[SaveUpdate, Refresh]"`
+}
+
+// Entidade Tag
+type Tag struct {
+    TableName string `table:"tags;schema=public"`
+    ID        int64  `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_tag_id"`
+    Name      string `json:"name" column:"name" prop:"[required, Unique]; length:50"`
+    Color     string `json:"color" column:"color" prop:"length:7"` // Hex color
+    
+    // Relacionamento N:N - Tags podem estar em muitos posts
+    Posts []Post `json:"Posts" manyAssociation:"foreignKey:tag_id; references:id; joinTable:post_tags; joinColumn:tag_id; inverseJoinColumn:post_id" cascade:"[SaveUpdate, Refresh]"`
+}
 ```
 
 ### Tipos Nullable
@@ -130,33 +247,7 @@ if idade.Valid {
 // Valor null: {"idade": null}
 ```
 
-### Relacionamentos
-
-O GoData suporte relacionamentos entre entidades usando foreign keys:
-
-```go
-type Menu struct {
-    ID            int64                 `json:"id" primaryKey:"idGenerator:none"`
-    IdParent      nullable.Int64        `json:"id_parent" column:"id_parent"`
-    Descricao     string                `json:"descricao" odata:"not null"`
-    
-    // Relacionamentos
-    MenuPermissao []MenuPermissao       `json:"MenuPermissao" foreignKey:"id_menu;references:id;OnDelete:CASCADE"`
-    MenuFilho     []Menu                `json:"Menu" foreignKey:"id_parent;references:id;OnDelete:CASCADE"`
-}
-
-type MenuPermissao struct {
-    ID          int64         `json:"id" primaryKey:"idGenerator:sequence"`
-    IdPermissao int64         `json:"id_permissao" odata:"not null"`
-    IdMenu      int64         `json:"id_menu" odata:"not null"`
-    
-    // Relacionamentos
-    Permissao   Permissao     `json:"Permissao" foreignKey:"id;references:id_permissao"`
-    Menu        Menu          `json:"Menu" foreignKey:"id;references:id_menu"`
-}
-```
-
-### Exemplo Completo
+### Exemplo Completo com Relacionamentos
 
 ```go
 package main
@@ -168,38 +259,50 @@ import (
     "github.com/godata/odata/pkg/nullable"
 )
 
+// Exemplo de estrutura completa com relacionamentos bidirecionais
 type User struct {
-    ID      int64           `json:"id" column:"id" odata:"not null" primaryKey:"idGenerator:sequence;name=seq_user_id"`
-    Nome    string          `json:"nome" column:"nome" odata:"not null; length:100"`
-    Email   string          `json:"email" column:"email" odata:"not null; length:255"`
-    Idade   nullable.Int64  `json:"idade" column:"idade"`
-    Ativo   bool            `json:"ativo" column:"ativo" odata:"not null; default"`
-    DtInc   time.Time       `json:"dt_inc" column:"dt_inc" odata:"not null; default"`
-    DtAlt   nullable.Time   `json:"dt_alt" column:"dt_alt"`
-    Salario nullable.Float64 `json:"salario" column:"salario" odata:"precision:10; scale:2"`
+    TableName string           `table:"users;schema=public"`
+    ID        int64            `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_user_id"`
+    Nome      string           `json:"nome" column:"nome" prop:"[required]; length:100"`
+    Email     string           `json:"email" column:"email" prop:"[required, Unique]; length:255"`
+    Idade     nullable.Int64   `json:"idade" column:"idade"`
+    Ativo     bool             `json:"ativo" column:"ativo" prop:"[required]; default"`
+    DtInc     time.Time        `json:"dt_inc" column:"dt_inc" prop:"[required, NoUpdate]; default"`
+    DtAlt     nullable.Time    `json:"dt_alt" column:"dt_alt"`
+    Salario   nullable.Float64 `json:"salario" column:"salario" prop:"precision:10; scale:2"`
+    
+    // Relacionamentos
+    Orders []Order `json:"Orders" manyAssociation:"foreignKey:user_id; references:id" cascade:"[SaveUpdate, Remove, Refresh, RemoveOrphan]"`
+    Profile *UserProfile `json:"Profile" association:"foreignKey:user_id; references:id" cascade:"[SaveUpdate, Remove, Refresh]"`
+}
+
+type UserProfile struct {
+    TableName string         `table:"user_profiles;schema=public"`
+    ID        int64          `json:"id" column:"id" prop:"[required]" primaryKey:"idGenerator:sequence;name=seq_profile_id"`
+    UserID    int64          `json:"user_id" column:"user_id" prop:"[required, Unique]"`
+    Bio       nullable.String `json:"bio" column:"bio" prop:"length:1000"`
+    Avatar    nullable.String `json:"avatar" column:"avatar" prop:"length:255"`
+    
+    // Relacionamento 1:1 bidirecional
+    User *User `json:"User" association:"foreignKey:user_id; references:id" cascade:"[SaveUpdate, Refresh]"`
 }
 
 func main() {
-    // Mapeamento automático
-    metadata, err := odata.MapEntityFromStruct(User{})
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    log.Printf("Entidade: %s", metadata.Name)
-    log.Printf("Tabela: %s", metadata.TableName)
-    log.Printf("Chaves: %v", metadata.Keys)
-    
     // Registro automático no servidor
     server := odata.NewServer(provider)
-    if err := server.RegisterEntity("Users", User{}); err != nil {
-        log.Fatal(err)
-    }
+    server.RegisterEntity("Users", User{})
+    server.RegisterEntity("UserProfiles", UserProfile{})
+    server.RegisterEntity("Orders", Order{})
+    server.RegisterEntity("OrderItems", OrderItem{})
+    server.RegisterEntity("Products", Product{})
     
     // Registro em lote
     entities := map[string]interface{}{
-        "Users":    User{},
-        "Products": Product{},
+        "Users":        User{},
+        "UserProfiles": UserProfile{},
+        "Orders":       Order{},
+        "OrderItems":   OrderItem{},
+        "Products":     Product{},
     }
     
     if err := server.AutoRegisterEntities(entities); err != nil {
@@ -300,7 +403,7 @@ Retorna o documento de serviço em formato JSON.
 ```
 GET /odata/$metadata
 ```
-Retorna os metadados da API em formato JSON (anteriormente XML).
+Retorna os metadados da API em formato JSON.
 
 Exemplo de resposta:
 ```json
@@ -423,10 +526,32 @@ GET /odata/Users?$select=nome,email
 GET /odata/Users?$select=*
 ```
 
+### Expansão de Relacionamentos ($expand)
+```
+GET /odata/Users?$expand=Orders
+GET /odata/Users?$expand=Orders,Profile
+GET /odata/Users?$expand=Orders($select=id,total;$filter=total gt 100)
+GET /odata/Orders?$expand=User,Items($expand=Product)
+```
+
 ### Contagem ($count)
 ```
 GET /odata/Users?$count=true
 GET /odata/Users/$count
+```
+
+### Campos Computados ($compute)
+```
+GET /odata/Orders?$compute=total mul 0.1 as tax
+GET /odata/Users?$compute=tolower(nome) as nome_lower
+GET /odata/Products?$compute=preco mul 1.2 as preco_com_taxa
+```
+
+### Busca Textual ($search)
+```
+GET /odata/Users?$search=João
+GET /odata/Products?$search="produto especial"
+GET /odata/Users?$search=João AND Silva
 ```
 
 ## Operadores Suportados
@@ -443,10 +568,49 @@ GET /odata/Users/$count
 - `contains(field, 'value')` - Contém
 - `startswith(field, 'value')` - Inicia com
 - `endswith(field, 'value')` - Termina com
+- `tolower(field)` - Converte para minúsculas
+- `toupper(field)` - Converte para maiúsculas
+- `trim(field)` - Remove espaços
+- `length(field)` - Comprimento da string
+
+### Funções Matemáticas
+- `round(field)` - Arredonda
+- `floor(field)` - Arredonda para baixo
+- `ceiling(field)` - Arredonda para cima
+- `abs(field)` - Valor absoluto
+
+### Operadores Aritméticos (para $compute)
+- `add` - Adição (+)
+- `sub` - Subtração (-)
+- `mul` - Multiplicação (*)
+- `div` - Divisão (/)
+- `mod` - Módulo (%)
 
 ### Lógicos
 - `and` - E lógico
 - `or` - Ou lógico
+- `not` - Negação
+
+## Cascata de Operações
+
+### Flags de Cascata Disponíveis
+
+- `SaveUpdate` - Salva/atualiza entidades relacionadas automaticamente
+- `Remove` - Remove entidades relacionadas quando a entidade principal é removida
+- `Refresh` - Atualiza entidades relacionadas quando a entidade principal é atualizada
+- `RemoveOrphan` - Remove entidades órfãs (apenas para manyAssociation)
+
+### Exemplo de Uso
+
+```go
+type User struct {
+    Orders []Order `json:"Orders" manyAssociation:"foreignKey:user_id; references:id" cascade:"[SaveUpdate, Remove, Refresh, RemoveOrphan]"`
+}
+
+type Order struct {
+    User *User `json:"User" association:"foreignKey:user_id; references:id" cascade:"[SaveUpdate, Refresh]"`
+}
+```
 
 ## Mapeamento de Tipos
 
@@ -469,3 +633,4 @@ GET /odata/Users/$count
 ## Referências
 
 - [Especificação OData v4](https://docs.oasis-open.org/odata/odata/v4.0/)
+- [Go Database/SQL Tutorial](https://golang.org/doc/tutorial/database-access) 
