@@ -11,7 +11,7 @@ Uma biblioteca Go completa para implementar APIs OData v4 com resposta JSON e su
 - **Tipos Nullable**: Suporte completo a valores null
 - **Relacionamentos**: Suporte a foreign keys e navegação entre entidades
 - **Consultas Avançadas**: Filtros, ordenação, paginação e seleção de campos
-- **Geração de Metadados**: Metadados XML automáticos
+- **Geração de Metadados**: Metadados JSON automáticos
 - **Testes Unitários**: Cobertura completa de testes
 
 ## Instalação
