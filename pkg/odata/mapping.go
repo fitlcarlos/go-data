@@ -485,7 +485,7 @@ func (m *EntityMapper) isRelationship(t reflect.Type) bool {
 
 // isNullableType verifica se é um tipo nullable
 func (m *EntityMapper) isNullableType(t reflect.Type) bool {
-	return t.PkgPath() == "github.com/godata/odata/pkg/nullable"
+	return t.PkgPath() == "github.com/fitlcarlos/godata/pkg/nullable"
 }
 
 // isPrimitiveType verifica se é um tipo primitivo
@@ -511,7 +511,7 @@ func (m *EntityMapper) mapGoType(t reflect.Type) string {
 	}
 
 	// Verifica tipos nullable
-	if t.PkgPath() == "github.com/godata/odata/pkg/nullable" {
+	if t.PkgPath() == "github.com/fitlcarlos/godata/pkg/nullable" {
 		switch t.Name() {
 		case "Int64":
 			return "int64"
@@ -606,14 +606,6 @@ func (m *EntityMapper) getTableSchema(t reflect.Type) string {
 func MapEntityFromStruct(entity interface{}) (EntityMetadata, error) {
 	mapper := NewEntityMapper()
 	return mapper.MapEntity(entity)
-}
-
-// AutoRegisterEntities registra múltiplas entidades automaticamente
-func (s *Server) AutoRegisterEntities(entities map[string]interface{}) error {
-	for name, entity := range entities {
-		s.RegisterEntity(name, entity)
-	}
-	return nil
 }
 
 // isMetadataField verifica se um campo é de metadados

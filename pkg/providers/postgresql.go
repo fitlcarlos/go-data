@@ -6,7 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/godata/odata/pkg/odata"
+	"github.com/fitlcarlos/godata/pkg/odata"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 

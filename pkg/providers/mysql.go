@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fitlcarlos/godata/pkg/odata"
+
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/godata/odata/pkg/odata"
 )
 
 // MySQLProvider implementa o provider para MySQL

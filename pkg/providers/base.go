@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/godata/odata/pkg/odata"
+	"github.com/fitlcarlos/godata/pkg/odata"
 )
 
 // BaseProvider implementa funcionalidades comuns a todos os providers

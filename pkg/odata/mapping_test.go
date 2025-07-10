@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godata/odata/pkg/nullable"
+	"github.com/fitlcarlos/godata/pkg/nullable"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
