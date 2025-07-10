@@ -20,6 +20,15 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 )
 
+// EntityAuthConfig configurações de autenticação por entidade
+type EntityAuthConfig struct {
+	RequireAuth    bool     // Se true, todas as operações requerem autenticação
+	RequiredRoles  []string // Roles necessárias para acessar a entidade
+	RequiredScopes []string // Scopes necessários para acessar a entidade
+	RequireAdmin   bool     // Se true, apenas administradores podem acessar
+	ReadOnly       bool     // Se true, apenas operações de leitura são permitidas
+}
+
 // ServerConfig representa as configurações do servidor
 type ServerConfig struct {
 	// Configurações básicas
@@ -53,6 +62,11 @@ type ServerConfig struct {
 
 	// Configurações de prefixo
 	RoutePrefix string
+
+	// Configurações JWT
+	EnableJWT   bool
+	JWTConfig   *JWTConfig
+	RequireAuth bool // Se true, todas as rotas requerem autenticação por padrão
 }
 
 // DefaultServerConfig retorna uma configuração padrão do servidor
@@ -87,6 +101,8 @@ type Server struct {
 	logger     *log.Logger
 	mu         sync.RWMutex
 	running    bool
+	jwtService *JWTService
+	entityAuth map[string]EntityAuthConfig // Configurações de autenticação por entidade
 }
 
 // NewServer cria uma nova instância do servidor OData
@@ -101,13 +117,20 @@ func NewServer(provider DatabaseProvider, host string, port int, routePrefix str
 // NewServerWithConfig cria uma nova instância do servidor OData com configurações personalizadas
 func NewServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Server {
 	server := &Server{
-		entities:  make(map[string]EntityService),
-		router:    fiber.New(),
-		parser:    NewODataParser(),
-		urlParser: NewURLParser(),
-		provider:  provider,
-		config:    config,
-		logger:    log.New(os.Stdout, "[OData] ", log.LstdFlags|log.Lshortfile),
+		entities:   make(map[string]EntityService),
+		router:     fiber.New(),
+		parser:     NewODataParser(),
+		urlParser:  NewURLParser(),
+		provider:   provider,
+		config:     config,
+		logger:     log.New(os.Stdout, "[OData] ", log.LstdFlags|log.Lshortfile),
+		entityAuth: make(map[string]EntityAuthConfig),
+	}
+
+	// Configurar JWT se habilitado
+	if config.EnableJWT {
+		server.jwtService = NewJWTService(config.JWTConfig)
+		server.logger.Printf("JWT habilitado com issuer: %s", config.JWTConfig.Issuer)
 	}
 
 	// Configurar middleware apenas se habilitado
@@ -196,22 +219,58 @@ func (s *Server) AutoRegisterEntities(entities map[string]interface{}) error {
 func (s *Server) setupEntityRoutes(entityName string) {
 	prefix := s.config.RoutePrefix
 
+	// Configurar middlewares de autenticação se JWT estiver habilitado
+	var authMiddleware fiber.Handler
+	if s.config.EnableJWT {
+		// Usar middleware de autenticação opcional para permitir acesso sem token se configurado
+		authMiddleware = s.OptionalAuthMiddleware()
+	}
+
+	// Middleware para verificar autenticação específica da entidade
+	entityAuthMiddleware := s.RequireEntityAuth(entityName)
+
+	// Aplicar middlewares nas rotas
+	var middlewares []fiber.Handler
+	if authMiddleware != nil {
+		middlewares = append(middlewares, authMiddleware)
+	}
+	middlewares = append(middlewares, entityAuthMiddleware)
+
 	// Rota para coleção de entidades (GET, POST)
-	s.router.Get(prefix+"/"+entityName, s.handleEntityCollection)
-	s.router.Post(prefix+"/"+entityName, s.handleEntityCollection)
+	getHandlers := append(middlewares, s.handleEntityCollection)
+	s.router.Get(prefix+"/"+entityName, getHandlers[0], getHandlers[1:]...)
+
+	postHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "POST"), s.handleEntityCollection)
+	s.router.Post(prefix+"/"+entityName, postHandlers[0], postHandlers[1:]...)
 
 	// Rota para entidade individual (GET, PUT, PATCH, DELETE)
-	s.router.Get(prefix+"/"+entityName+"({id})", s.handleEntityById)
-	s.router.Put(prefix+"/"+entityName+"({id})", s.handleEntityById)
-	s.router.Patch(prefix+"/"+entityName+"({id})", s.handleEntityById)
-	s.router.Delete(prefix+"/"+entityName+"({id})", s.handleEntityById)
-	s.router.Get(prefix+"/"+entityName+"({id:[0-9]+})", s.handleEntityById)
-	s.router.Put(prefix+"/"+entityName+"({id:[0-9]+})", s.handleEntityById)
-	s.router.Patch(prefix+"/"+entityName+"({id:[0-9]+})", s.handleEntityById)
-	s.router.Delete(prefix+"/"+entityName+"({id:[0-9]+})", s.handleEntityById)
+	getByIdHandlers := append(middlewares, s.handleEntityById)
+	s.router.Get(prefix+"/"+entityName+"({id})", getByIdHandlers[0], getByIdHandlers[1:]...)
+
+	putHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PUT"), s.handleEntityById)
+	s.router.Put(prefix+"/"+entityName+"({id})", putHandlers[0], putHandlers[1:]...)
+
+	patchHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PATCH"), s.handleEntityById)
+	s.router.Patch(prefix+"/"+entityName+"({id})", patchHandlers[0], patchHandlers[1:]...)
+
+	deleteHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "DELETE"), s.handleEntityById)
+	s.router.Delete(prefix+"/"+entityName+"({id})", deleteHandlers[0], deleteHandlers[1:]...)
+
+	getByIdNumHandlers := append(middlewares, s.handleEntityById)
+	s.router.Get(prefix+"/"+entityName+"({id:[0-9]+})", getByIdNumHandlers[0], getByIdNumHandlers[1:]...)
+
+	putNumHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PUT"), s.handleEntityById)
+	s.router.Put(prefix+"/"+entityName+"({id:[0-9]+})", putNumHandlers[0], putNumHandlers[1:]...)
+
+	patchNumHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PATCH"), s.handleEntityById)
+	s.router.Patch(prefix+"/"+entityName+"({id:[0-9]+})", patchNumHandlers[0], patchNumHandlers[1:]...)
+
+	deleteNumHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "DELETE"), s.handleEntityById)
+	s.router.Delete(prefix+"/"+entityName+"({id:[0-9]+})", deleteNumHandlers[0], deleteNumHandlers[1:]...)
 
 	// Rota para count da coleção
-	s.router.Get(prefix+"/"+entityName+"/$count", s.handleEntityCount)
+	countHandlers := append(middlewares, s.handleEntityCount)
+	s.router.Get(prefix+"/"+entityName+"/$count", countHandlers[0], countHandlers[1:]...)
 
 	// Rota OPTIONS para CORS se habilitado
 	if s.config.EnableCORS {
