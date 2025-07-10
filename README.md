@@ -7,7 +7,7 @@ Uma biblioteca Go completa para implementar APIs OData v4 com resposta JSON e su
 - **Padrão OData v4**: Implementação completa do protocolo OData
 - **Resposta JSON**: Dados retornados exclusivamente em formato JSON
 - **Múltiplos Bancos**: Suporte para PostgreSQL, Oracle e MySQL
-- **Mapeamento Automático**: Sistema de mapeamento baseado em tags de struct (inspirado no TMS Aurelius)
+- **Mapeamento Automático**: Sistema de mapeamento baseado em tags de struct
 - **Tipos Nullable**: Suporte completo a valores null
 - **Relacionamentos**: Suporte a foreign keys e navegação entre entidades
 - **Consultas Avançadas**: Filtros, ordenação, paginação e seleção de campos
@@ -24,7 +24,7 @@ go get github.com/godata/odata
 
 ### Sistema de Tags
 
-O GoData utiliza um sistema de tags de struct similar ao TMS Aurelius para definir metadados automaticamente:
+O GoData utiliza um sistema de tags de struct para definir metadados automaticamente:
 
 ```go
 type User struct {
