@@ -8,6 +8,7 @@ Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fib
 - [Instalação](#-instalação)
 - [Exemplo de Uso](#-exemplo-de-uso)
 - [Configuração do Servidor](#-configuração-do-servidor)
+- [Autenticação JWT](#-autenticação-jwt)
 - [Mapeamento de Entidades](#-mapeamento-de-entidades)
 - [Bancos de Dados Suportados](#-bancos-de-dados-suportados)
 - [Endpoints OData](#-endpoints-odata)
@@ -53,6 +54,15 @@ Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fib
 - Contagem ($count)
 - Campos computados ($compute)
 - Busca textual ($search)
+
+### 🔐 **Autenticação JWT**
+- Geração de tokens de acesso e refresh
+- Validação de tokens JWT
+- Middleware de autenticação obrigatória e opcional
+- Controle de acesso baseado em roles e scopes
+- Privilégios de administrador
+- Configuração de autenticação por entidade
+- Entidades somente leitura
 
 ## 🚀 Instalação
 
@@ -177,6 +187,215 @@ config.TLSConfig = &tls.Config{
 }
 config.CertFile = "server.crt"
 config.CertKeyFile = "server.key"
+```
+
+## 🔐 Autenticação JWT
+
+O GoData oferece suporte completo à autenticação JWT com controle de acesso granular baseado em roles e scopes.
+
+### Configuração Básica
+
+```go
+import "github.com/fitlcarlos/godata/pkg/odata"
+
+// Configurar JWT
+jwtConfig := &odata.JWTConfig{
+    SecretKey: "sua-chave-secreta-super-segura",
+    Issuer:    "seu-aplicativo",
+    ExpiresIn: 1 * time.Hour,
+    RefreshIn: 24 * time.Hour,
+    Algorithm: "HS256",
+}
+
+// Configurar servidor com JWT
+config := odata.DefaultServerConfig()
+config.EnableJWT = true
+config.JWTConfig = jwtConfig
+config.RequireAuth = false // Autenticação global opcional
+
+server := odata.NewServerWithConfig(provider, config)
+```
+
+### Implementando Autenticador
+
+```go
+type UserAuthenticator struct {
+    // Sua implementação de banco de dados
+}
+
+func (a *UserAuthenticator) Authenticate(username, password string) (*odata.UserIdentity, error) {
+    // Validar credenciais no banco de dados
+    // Retornar UserIdentity com roles e scopes
+    return &odata.UserIdentity{
+        Username: username,
+        Roles:    []string{"user", "manager"},
+        Scopes:   []string{"read", "write"},
+        Admin:    false,
+        Custom: map[string]interface{}{
+            "department": "IT",
+            "level":      "senior",
+        },
+    }, nil
+}
+
+func (a *UserAuthenticator) GetUserByUsername(username string) (*odata.UserIdentity, error) {
+    // Buscar usuário no banco de dados
+    return user, nil
+}
+
+// Configurar rotas de autenticação
+authenticator := &UserAuthenticator{}
+server.SetupAuthRoutes(authenticator)
+```
+
+### Controle de Acesso por Entidade
+
+```go
+// Apenas administradores podem acessar usuários
+server.SetEntityAuth("Users", odata.EntityAuthConfig{
+    RequireAuth:  true,
+    RequireAdmin: true,
+})
+
+// Managers e admins podem escrever produtos
+server.SetEntityAuth("Products", odata.EntityAuthConfig{
+    RequireAuth:    true,
+    RequiredRoles:  []string{"manager", "admin"},
+    RequiredScopes: []string{"write"},
+})
+
+// Entidade somente leitura
+server.SetEntityAuth("Reports", odata.EntityAuthConfig{
+    RequireAuth: true,
+    ReadOnly:    true,
+})
+```
+
+### Middlewares de Autorização
+
+```go
+// Middleware que requer autenticação
+app.Use("/admin", odata.RequireAuth())
+
+// Middleware que requer role específica
+app.Use("/management", odata.RequireRole("manager"))
+
+// Middleware que requer múltiplas roles
+app.Use("/restricted", odata.RequireAnyRole("admin", "supervisor"))
+
+// Middleware que requer scope específico
+app.Use("/api/write", odata.RequireScope("write"))
+
+// Middleware que requer privilégios de admin
+app.Use("/admin", odata.RequireAdmin())
+```
+
+### Endpoints de Autenticação
+
+#### Login
+```bash
+POST /auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "password123"
+}
+```
+
+Resposta:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "user": {
+    "username": "admin",
+    "roles": ["admin", "user"],
+    "scopes": ["read", "write", "delete"],
+    "admin": true
+  }
+}
+```
+
+#### Refresh Token
+```bash
+POST /auth/refresh
+Content-Type: application/json
+
+{
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+#### Informações do Usuário
+```bash
+GET /auth/me
+Authorization: Bearer <access_token>
+```
+
+#### Logout
+```bash
+POST /auth/logout
+Authorization: Bearer <access_token>
+```
+
+### Usando Tokens JWT
+
+```bash
+# Acessar endpoint protegido
+curl -X GET http://localhost:8080/odata/Users \
+  -H "Authorization: Bearer <access_token>"
+```
+
+### Exemplo Completo
+
+Veja o exemplo completo em [`examples/jwt/`](examples/jwt/) que demonstra:
+
+- Configuração completa de JWT
+- Usuários de teste com diferentes roles
+- Controle de acesso por entidade
+- Cenários de teste para diferentes tipos de usuário
+- Integração com banco de dados
+
+### Estrutura de UserIdentity
+
+```go
+type UserIdentity struct {
+    Username string                 `json:"username"`
+    Roles    []string               `json:"roles"`
+    Scopes   []string               `json:"scopes"`
+    Admin    bool                   `json:"admin"`
+    Custom   map[string]interface{} `json:"custom"`
+}
+
+// Métodos disponíveis
+user.HasRole("manager")           // Verifica role específica
+user.HasAnyRole("admin", "user")  // Verifica múltiplas roles
+user.HasScope("write")            // Verifica scope específico
+user.IsAdmin()                    // Verifica se é admin
+user.GetCustomClaim("department") // Obtém claim customizado
+```
+
+### Configuração de Segurança
+
+```go
+type JWTConfig struct {
+    SecretKey  string        // Chave secreta para assinatura
+    Issuer     string        // Emissor do token
+    ExpiresIn  time.Duration // Tempo de expiração do access token
+    RefreshIn  time.Duration // Tempo de expiração do refresh token
+    Algorithm  string        // Algoritmo de assinatura (HS256)
+}
+
+type EntityAuthConfig struct {
+    RequireAuth    bool     // Requer autenticação
+    RequiredRoles  []string // Roles necessárias
+    RequiredScopes []string // Scopes necessários
+    RequireAdmin   bool     // Requer privilégios de admin
+    ReadOnly       bool     // Entidade somente leitura
+}
 ```
 
 ## 🗂️ Mapeamento de Entidades
