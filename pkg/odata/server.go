@@ -16,7 +16,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
-	"github.com/gofiber/fiber/v3/middleware/logger"
+	fiberlogger "github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 )
 
@@ -91,18 +91,19 @@ func DefaultServerConfig() *ServerConfig {
 
 // Server representa o servidor OData
 type Server struct {
-	entities   map[string]EntityService
-	router     *fiber.App
-	parser     *ODataParser
-	urlParser  *URLParser
-	provider   DatabaseProvider
-	config     *ServerConfig
-	httpServer *fiber.App // Changed from http.Server to fiber.App
-	logger     *log.Logger
-	mu         sync.RWMutex
-	running    bool
-	jwtService *JWTService
-	entityAuth map[string]EntityAuthConfig // Configurações de autenticação por entidade
+	entities     map[string]EntityService
+	router       *fiber.App
+	parser       *ODataParser
+	urlParser    *URLParser
+	provider     DatabaseProvider
+	config       *ServerConfig
+	httpServer   *fiber.App // Changed from http.Server to fiber.App
+	logger       *log.Logger
+	mu           sync.RWMutex
+	running      bool
+	jwtService   *JWTService
+	entityAuth   map[string]EntityAuthConfig // Configurações de autenticação por entidade
+	eventManager *EntityEventManager         // Gerenciador de eventos de entidade
 }
 
 // NewServer cria uma nova instância do servidor OData
@@ -116,15 +117,18 @@ func NewServer(provider DatabaseProvider, host string, port int, routePrefix str
 
 // NewServerWithConfig cria uma nova instância do servidor OData com configurações personalizadas
 func NewServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Server {
+	logger := log.New(os.Stdout, "[OData] ", log.LstdFlags|log.Lshortfile)
+
 	server := &Server{
-		entities:   make(map[string]EntityService),
-		router:     fiber.New(),
-		parser:     NewODataParser(),
-		urlParser:  NewURLParser(),
-		provider:   provider,
-		config:     config,
-		logger:     log.New(os.Stdout, "[OData] ", log.LstdFlags|log.Lshortfile),
-		entityAuth: make(map[string]EntityAuthConfig),
+		entities:     make(map[string]EntityService),
+		router:       fiber.New(),
+		parser:       NewODataParser(),
+		urlParser:    NewURLParser(),
+		provider:     provider,
+		config:       config,
+		logger:       logger,
+		entityAuth:   make(map[string]EntityAuthConfig),
+		eventManager: NewEntityEventManager(logger),
 	}
 
 	// Configurar JWT se habilitado
@@ -144,7 +148,7 @@ func NewServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 		}))
 	}
 	if config.EnableLogging {
-		server.router.Use(logger.New(logger.Config{
+		server.router.Use(fiberlogger.New(fiberlogger.Config{
 			Format: "${time} ${method} ${path} ${status} ${latency} ${bytesReceived} ${bytesSent}\n",
 			Output: os.Stdout,
 		}))
@@ -443,6 +447,101 @@ func (s *Server) GetEntities() map[string]EntityService {
 	return entities
 }
 
+// GetEventManager retorna o gerenciador de eventos
+func (s *Server) GetEventManager() *EntityEventManager {
+	return s.eventManager
+}
+
+// OnEntityGet registra um handler para o evento EntityGet
+func (s *Server) OnEntityGet(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityGet, entityName, handler)
+}
+
+// OnEntityList registra um handler para o evento EntityList
+func (s *Server) OnEntityList(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityList, entityName, handler)
+}
+
+// OnEntityInserting registra um handler para o evento EntityInserting
+func (s *Server) OnEntityInserting(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityInserting, entityName, handler)
+}
+
+// OnEntityInserted registra um handler para o evento EntityInserted
+func (s *Server) OnEntityInserted(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityInserted, entityName, handler)
+}
+
+// OnEntityModifying registra um handler para o evento EntityModifying
+func (s *Server) OnEntityModifying(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityModifying, entityName, handler)
+}
+
+// OnEntityModified registra um handler para o evento EntityModified
+func (s *Server) OnEntityModified(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityModified, entityName, handler)
+}
+
+// OnEntityDeleting registra um handler para o evento EntityDeleting
+func (s *Server) OnEntityDeleting(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityDeleting, entityName, handler)
+}
+
+// OnEntityDeleted registra um handler para o evento EntityDeleted
+func (s *Server) OnEntityDeleted(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityDeleted, entityName, handler)
+}
+
+// OnEntityError registra um handler para o evento EntityError
+func (s *Server) OnEntityError(entityName string, handler func(args EventArgs) error) {
+	s.eventManager.SubscribeFunc(EventEntityError, entityName, handler)
+}
+
+// OnEntityGetGlobal registra um handler global para o evento EntityGet
+func (s *Server) OnEntityGetGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityGet, handler)
+}
+
+// OnEntityListGlobal registra um handler global para o evento EntityList
+func (s *Server) OnEntityListGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityList, handler)
+}
+
+// OnEntityInsertingGlobal registra um handler global para o evento EntityInserting
+func (s *Server) OnEntityInsertingGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityInserting, handler)
+}
+
+// OnEntityInsertedGlobal registra um handler global para o evento EntityInserted
+func (s *Server) OnEntityInsertedGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityInserted, handler)
+}
+
+// OnEntityModifyingGlobal registra um handler global para o evento EntityModifying
+func (s *Server) OnEntityModifyingGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityModifying, handler)
+}
+
+// OnEntityModifiedGlobal registra um handler global para o evento EntityModified
+func (s *Server) OnEntityModifiedGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityModified, handler)
+}
+
+// OnEntityDeletingGlobal registra um handler global para o evento EntityDeleting
+func (s *Server) OnEntityDeletingGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityDeleting, handler)
+}
+
+// OnEntityDeletedGlobal registra um handler global para o evento EntityDeleted
+func (s *Server) OnEntityDeletedGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityDeleted, handler)
+}
+
+// OnEntityErrorGlobal registra um handler global para o evento EntityError
+func (s *Server) OnEntityErrorGlobal(handler func(args EventArgs) error) {
+	s.eventManager.SubscribeGlobalFunc(EventEntityError, handler)
+}
+
 // isOriginAllowed verifica se uma origem é permitida
 func (s *Server) isOriginAllowed(origin string) bool {
 	if origin == "" {
@@ -634,6 +733,29 @@ func (s *Server) handleGetCollection(c fiber.Ctx, service EntityService) error {
 		return nil
 	}
 
+	// Dispara evento OnEntityList após a consulta
+	if response != nil && response.Value != nil {
+		eventCtx := createEventContext(c, entityName)
+		if results, ok := response.Value.([]interface{}); ok {
+			args := NewEntityListArgs(eventCtx, options, results)
+
+			// Definir TotalCount corretamente
+			if response.Count != nil {
+				args.TotalCount = *response.Count
+			} else {
+				// Se Count não estiver disponível, usar o tamanho dos resultados
+				args.TotalCount = int64(len(results))
+			}
+
+			// Definir se filtro foi aplicado
+			args.FilterApplied = options.Filter != nil
+
+			if err := s.eventManager.Emit(args); err != nil {
+				s.logger.Printf("❌ Erro no evento OnEntityList: %v", err)
+			}
+		}
+	}
+
 	s.logger.Printf("✅ Consulta executada com sucesso")
 	return c.JSON(response)
 }
@@ -648,6 +770,15 @@ func (s *Server) handleGetEntity(c fiber.Ctx, service EntityService, keys map[st
 			s.writeError(c, fiber.StatusInternalServerError, "QueryError", err.Error())
 		}
 		return nil
+	}
+
+	// Dispara evento OnEntityGet após recuperar a entidade
+	entityName := s.extractEntityName(c.Path())
+	eventCtx := createEventContext(c, entityName)
+	args := NewEntityGetArgs(eventCtx, keys, entity)
+
+	if err := s.eventManager.Emit(args); err != nil {
+		s.logger.Printf("❌ Erro no evento OnEntityGet: %v", err)
 	}
 
 	return c.JSON(entity)

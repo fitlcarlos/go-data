@@ -9,6 +9,7 @@ Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fib
 - [Exemplo de Uso](#-exemplo-de-uso)
 - [Configuração do Servidor](#-configuração-do-servidor)
 - [Autenticação JWT](#-autenticação-jwt)
+- [Eventos de Entidade](#-eventos-de-entidade)
 - [Mapeamento de Entidades](#-mapeamento-de-entidades)
 - [Bancos de Dados Suportados](#-bancos-de-dados-suportados)
 - [Endpoints OData](#-endpoints-odata)
@@ -397,6 +398,344 @@ type EntityAuthConfig struct {
     ReadOnly       bool     // Entidade somente leitura
 }
 ```
+
+## 🎯 Eventos de Entidade
+
+O GoData oferece um sistema completo de eventos de entidade, permitindo interceptar e customizar operações CRUD através de handlers de eventos. Este sistema é ideal para implementar validações customizadas, auditoria, log de atividades e regras de negócio complexas.
+
+### Tipos de Eventos Disponíveis
+
+#### Eventos de Recuperação
+- **`OnEntityGet`**: Disparado após uma entidade ser recuperada, antes de ser enviada ao cliente
+- **`OnEntityList`**: Disparado quando o cliente consulta uma coleção de entidades
+
+#### Eventos de Inserção
+- **`OnEntityInserting`**: Disparado antes de uma entidade ser inserida (cancelável)
+- **`OnEntityInserted`**: Disparado após uma entidade ser inserida
+
+#### Eventos de Atualização
+- **`OnEntityModifying`**: Disparado antes de uma entidade ser atualizada (cancelável)
+- **`OnEntityModified`**: Disparado após uma entidade ser atualizada
+
+#### Eventos de Exclusão
+- **`OnEntityDeleting`**: Disparado antes de uma entidade ser excluída (cancelável)
+- **`OnEntityDeleted`**: Disparado após uma entidade ser excluída
+
+#### Eventos de Erro
+- **`OnEntityError`**: Disparado quando ocorre um erro durante operações da entidade
+
+### Registro de Eventos
+
+#### Eventos Específicos por Entidade
+
+```go
+// Validação antes da inserção
+server.OnEntityInserting("Users", func(args odata.EventArgs) error {
+    insertArgs := args.(*odata.EntityInsertingArgs)
+    
+    // Validação customizada
+    if name, ok := insertArgs.Data["name"].(string); ok && len(name) < 2 {
+        args.Cancel("Nome deve ter pelo menos 2 caracteres")
+        return nil
+    }
+    
+    // Adicionar timestamps automaticamente
+    insertArgs.Data["created"] = time.Now()
+    insertArgs.Data["updated"] = time.Now()
+    
+    return nil
+})
+
+// Ação após inserção
+server.OnEntityInserted("Users", func(args odata.EventArgs) error {
+    insertedArgs := args.(*odata.EntityInsertedArgs)
+    
+    // Enviar email de boas-vindas
+    // sendWelcomeEmail(insertedArgs.CreatedEntity)
+    
+    log.Printf("Usuário criado: %+v", insertedArgs.CreatedEntity)
+    return nil
+})
+
+// Validação antes da atualização
+server.OnEntityModifying("Users", func(args odata.EventArgs) error {
+    modifyArgs := args.(*odata.EntityModifyingArgs)
+    
+    // Impedir alteração de email por usuários não-admin
+    if _, emailChanged := modifyArgs.Data["email"]; emailChanged {
+        if !isCurrentUserAdmin(modifyArgs.GetContext()) {
+            args.Cancel("Apenas administradores podem alterar email")
+            return nil
+        }
+    }
+    
+    // Atualizar timestamp
+    modifyArgs.Data["updated"] = time.Now()
+    
+    return nil
+})
+
+// Controle de acesso para exclusão
+server.OnEntityDeleting("Users", func(args odata.EventArgs) error {
+    deleteArgs := args.(*odata.EntityDeletingArgs)
+    
+    // Impedir exclusão se usuário tem dependências
+    if hasUserDependencies(deleteArgs.Keys) {
+        args.Cancel("Não é possível excluir usuário com dependências")
+        return nil
+    }
+    
+    return nil
+})
+```
+
+#### Eventos Globais
+
+```go
+// Auditoria global para todas as inserções
+server.OnEntityInsertingGlobal(func(args odata.EventArgs) error {
+    log.Printf("Inserindo entidade: %s por usuário: %s", 
+        args.GetEntityName(), 
+        args.GetContext().UserID)
+    
+    // Registrar auditoria
+    // auditLog.Record("INSERT", args.GetEntityName(), args.GetContext().UserID)
+    
+    return nil
+})
+
+// Log de todas as modificações
+server.OnEntityModifyingGlobal(func(args odata.EventArgs) error {
+    log.Printf("Modificando entidade: %s", args.GetEntityName())
+    return nil
+})
+
+// Tratamento global de erros
+server.OnEntityErrorGlobal(func(args odata.EventArgs) error {
+    errorArgs := args.(*odata.EntityErrorArgs)
+    
+    log.Printf("Erro na entidade %s: %v", 
+        args.GetEntityName(), 
+        errorArgs.Error)
+    
+    // Enviar notificação ou alerta
+    // errorNotification.Send(errorArgs.Error, errorArgs.Operation)
+    
+    return nil
+})
+```
+
+### Argumentos dos Eventos
+
+#### EntityInsertingArgs
+```go
+type EntityInsertingArgs struct {
+    Data             map[string]interface{} // Dados sendo inseridos
+    ValidationErrors []string               // Erros de validação
+    // Cancelável: true
+}
+```
+
+#### EntityInsertedArgs
+```go
+type EntityInsertedArgs struct {
+    CreatedEntity interface{} // Entidade criada
+    NewID         interface{} // ID da nova entidade
+    // Cancelável: false
+}
+```
+
+#### EntityModifyingArgs
+```go
+type EntityModifyingArgs struct {
+    Keys             map[string]interface{} // Chaves da entidade
+    Data             map[string]interface{} // Dados sendo atualizados
+    OriginalEntity   interface{}            // Entidade original
+    ValidationErrors []string               // Erros de validação
+    // Cancelável: true
+}
+```
+
+#### EntityGetArgs
+```go
+type EntityGetArgs struct {
+    Keys        map[string]interface{} // Chaves da entidade
+    QueryParams map[string]interface{} // Parâmetros da consulta
+    // Cancelável: false
+}
+```
+
+#### EntityListArgs
+```go
+type EntityListArgs struct {
+    QueryOptions  QueryOptions    // Opções da consulta OData
+    Results       []interface{}   // Resultados da consulta
+    TotalCount    int64          // Total de registros
+    CustomFilters map[string]interface{} // Filtros customizados
+    // Cancelável: true
+}
+```
+
+### Contexto dos Eventos
+
+Todos os eventos recebem um contexto rico com informações sobre a requisição:
+
+```go
+type EventContext struct {
+    Context      context.Context // Contexto da requisição
+    FiberContext fiber.Ctx       // Contexto do Fiber
+    EntityName   string          // Nome da entidade
+    EntityType   string          // Tipo da entidade
+    UserID       string          // ID do usuário atual
+    UserRoles    []string        // Roles do usuário
+    UserScopes   []string        // Scopes do usuário
+    RequestID    string          // ID da requisição
+    Timestamp    int64           // Timestamp do evento
+    Extra        map[string]interface{} // Dados extras
+}
+```
+
+### Cancelamento de Eventos
+
+Alguns eventos podem ser cancelados para impedir a operação:
+
+```go
+server.OnEntityInserting("Products", func(args odata.EventArgs) error {
+    insertArgs := args.(*odata.EntityInsertingArgs)
+    
+    // Verificar se pode cancelar
+    if args.CanCancel() {
+        if price, ok := insertArgs.Data["price"].(float64); ok && price < 0 {
+            args.Cancel("Preço não pode ser negativo")
+            return nil
+        }
+    }
+    
+    return nil
+})
+```
+
+### Exemplo Prático: Sistema de Auditoria
+
+```go
+type AuditLog struct {
+    ID        int64     `json:"id"`
+    Entity    string    `json:"entity"`
+    Operation string    `json:"operation"`
+    UserID    string    `json:"user_id"`
+    Data      string    `json:"data"`
+    Timestamp time.Time `json:"timestamp"`
+}
+
+func setupAuditEvents(server *odata.Server) {
+    // Registrar todas as inserções
+    server.OnEntityInsertedGlobal(func(args odata.EventArgs) error {
+        return recordAudit("INSERT", args)
+    })
+    
+    // Registrar todas as atualizações
+    server.OnEntityModifiedGlobal(func(args odata.EventArgs) error {
+        return recordAudit("UPDATE", args)
+    })
+    
+    // Registrar todas as exclusões
+    server.OnEntityDeletedGlobal(func(args odata.EventArgs) error {
+        return recordAudit("DELETE", args)
+    })
+}
+
+func recordAudit(operation string, args odata.EventArgs) error {
+    audit := AuditLog{
+        Entity:    args.GetEntityName(),
+        Operation: operation,
+        UserID:    args.GetContext().UserID,
+        Data:      fmt.Sprintf("%+v", args.GetEntity()),
+        Timestamp: time.Now(),
+    }
+    
+    // Salvar no banco de dados
+    // auditService.Save(audit)
+    
+    return nil
+}
+```
+
+### Exemplo Prático: Validação Avançada
+
+```go
+func setupValidationEvents(server *odata.Server) {
+    // Validação de usuários
+    server.OnEntityInserting("Users", func(args odata.EventArgs) error {
+        insertArgs := args.(*odata.EntityInsertingArgs)
+        
+        // Validações customizadas
+        if err := validateUser(insertArgs.Data); err != nil {
+            args.Cancel(err.Error())
+            return nil
+        }
+        
+        return nil
+    })
+    
+    // Validação de produtos
+    server.OnEntityInserting("Products", func(args odata.EventArgs) error {
+        insertArgs := args.(*odata.EntityInsertingArgs)
+        
+        // Verificar se categoria existe
+        if categoryID, ok := insertArgs.Data["category_id"].(int64); ok {
+            if !categoryExists(categoryID) {
+                args.Cancel("Categoria não encontrada")
+                return nil
+            }
+        }
+        
+        return nil
+    })
+}
+
+func validateUser(data map[string]interface{}) error {
+    // Validar email único
+    if email, ok := data["email"].(string); ok {
+        if emailExists(email) {
+            return fmt.Errorf("Email já está em uso")
+        }
+    }
+    
+    // Validar idade
+    if age, ok := data["age"].(int64); ok && age < 18 {
+        return fmt.Errorf("Idade deve ser maior que 18 anos")
+    }
+    
+    return nil
+}
+```
+
+### Gerenciamento de Eventos
+
+```go
+// Obter número de handlers registrados
+count := server.GetEventManager().GetHandlerCount(odata.EventEntityInserting, "Users")
+
+// Listar todas as assinaturas
+subscriptions := server.GetEventManager().ListSubscriptions()
+
+// Limpar handlers de uma entidade específica
+server.GetEventManager().ClearEntity("Users")
+
+// Limpar todos os handlers
+server.GetEventManager().Clear()
+```
+
+### Exemplo Completo
+
+Veja o exemplo completo em [`examples/events/`](examples/events/) que demonstra:
+
+- Configuração completa de eventos
+- Validações customizadas
+- Sistema de auditoria
+- Controle de acesso baseado em contexto
+- Tratamento de erros
+- Cancelamento de operações
 
 ## 🗂️ Mapeamento de Entidades
 
