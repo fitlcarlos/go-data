@@ -406,23 +406,146 @@ func (e *OrderedEntity) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implementa json.Unmarshaler
 func (e *OrderedEntity) UnmarshalJSON(data []byte) error {
-	// Primeiro deserializa como map
+	// Parse do JSON em um map temporário
 	var temp map[string]interface{}
 	if err := json.Unmarshal(data, &temp); err != nil {
 		return err
 	}
 
-	// Inicializa se necessário
-	if e.data == nil {
-		e.data = make(map[string]interface{})
-	}
+	// Reinicializa os dados
+	e.data = make(map[string]interface{})
+	e.Properties = make([]OrderedProperty, 0)
+	e.NavigationLinks = make([]NavigationLink, 0)
+	e.navigationData = make(map[string]string)
 
-	// Copia os dados mantendo a ordem que vier do JSON
+	// Adiciona as propriedades na ordem que aparecem no JSON
 	for key, value := range temp {
-		e.Set(key, value)
+		if strings.HasSuffix(key, "@odata.navigationLink") {
+			// É um navigation link
+			propName := strings.TrimSuffix(key, "@odata.navigationLink")
+			e.SetNavigationProperty(propName, value.(string))
+		} else {
+			// É uma propriedade normal
+			e.Set(key, value)
+		}
 	}
 
 	return nil
+}
+
+// OrderedEntityResponse representa uma resposta de entidade única mantendo a ordem dos campos
+type OrderedEntityResponse struct {
+	Context         string                   `json:"@odata.context"`
+	Fields          []ResponseField          `json:"-"`
+	NavigationLinks []ResponseNavigationLink `json:"-"`
+	entityMetadata  EntityMetadata           `json:"-"`
+}
+
+// ResponseField representa um campo na resposta
+type ResponseField struct {
+	Name  string      `json:"-"`
+	Value interface{} `json:"-"`
+}
+
+// ResponseNavigationLink representa um navigation link na resposta
+type ResponseNavigationLink struct {
+	Name string `json:"-"`
+	URL  string `json:"-"`
+}
+
+// NewOrderedEntityResponse cria uma nova resposta de entidade ordenada
+func NewOrderedEntityResponse(context string, metadata EntityMetadata) *OrderedEntityResponse {
+	return &OrderedEntityResponse{
+		Context:         context,
+		Fields:          make([]ResponseField, 0),
+		NavigationLinks: make([]ResponseNavigationLink, 0),
+		entityMetadata:  metadata,
+	}
+}
+
+// AddField adiciona um campo à resposta
+func (r *OrderedEntityResponse) AddField(name string, value interface{}) {
+	r.Fields = append(r.Fields, ResponseField{
+		Name:  name,
+		Value: value,
+	})
+}
+
+// AddNavigationLink adiciona um navigation link à resposta
+func (r *OrderedEntityResponse) AddNavigationLink(name, url string) {
+	r.NavigationLinks = append(r.NavigationLinks, ResponseNavigationLink{
+		Name: name,
+		URL:  url,
+	})
+}
+
+// MarshalJSON implementa json.Marshaler mantendo a ordem dos campos conforme os metadados
+func (r *OrderedEntityResponse) MarshalJSON() ([]byte, error) {
+	var pairs []string
+
+	// Adiciona o contexto primeiro
+	contextJSON, err := json.Marshal(r.Context)
+	if err != nil {
+		return nil, err
+	}
+	pairs = append(pairs, fmt.Sprintf(`"@odata.context":%s`, string(contextJSON)))
+
+	// Adiciona campos na ordem dos metadados da entidade
+	fieldsMap := make(map[string]interface{})
+	for _, field := range r.Fields {
+		fieldsMap[field.Name] = field.Value
+	}
+
+	// Itera sobre as propriedades na ordem definida nos metadados
+	for _, metaProp := range r.entityMetadata.Properties {
+		if !metaProp.IsNavigation {
+			if value, exists := fieldsMap[metaProp.Name]; exists {
+				// Serializa o valor
+				valueJSON, err := json.Marshal(value)
+				if err != nil {
+					return nil, err
+				}
+				pairs = append(pairs, fmt.Sprintf(`"%s":%s`, metaProp.Name, string(valueJSON)))
+			}
+		}
+	}
+
+	// Adiciona campos que não estão nos metadados (na ordem que foram adicionados)
+	addedFields := make(map[string]bool)
+	for _, metaProp := range r.entityMetadata.Properties {
+		if !metaProp.IsNavigation {
+			addedFields[metaProp.Name] = true
+		}
+	}
+
+	for _, field := range r.Fields {
+		if !addedFields[field.Name] {
+			valueJSON, err := json.Marshal(field.Value)
+			if err != nil {
+				return nil, err
+			}
+			pairs = append(pairs, fmt.Sprintf(`"%s":%s`, field.Name, string(valueJSON)))
+			addedFields[field.Name] = true
+		}
+	}
+
+	// Adiciona navigation links na ordem dos metadados
+	for _, metaProp := range r.entityMetadata.Properties {
+		if metaProp.IsNavigation {
+			for _, navLink := range r.NavigationLinks {
+				if navLink.Name == metaProp.Name {
+					linkJSON, err := json.Marshal(navLink.URL)
+					if err != nil {
+						return nil, err
+					}
+					pairs = append(pairs, fmt.Sprintf(`"%s@odata.navigationLink":%s`, navLink.Name, string(linkJSON)))
+					break
+				}
+			}
+		}
+	}
+
+	return []byte(fmt.Sprintf("{%s}", strings.Join(pairs, ","))), nil
 }
 
 // Funções de conveniência para criação de erros

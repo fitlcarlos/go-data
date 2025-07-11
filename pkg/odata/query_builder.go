@@ -2,7 +2,9 @@ package odata
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 )
@@ -13,10 +15,9 @@ type NodeMap map[string]string
 // PrepareMap mapeia funções para preparação de valores
 type PrepareMap map[string]string
 
-// NamedArgs gerencia argumentos nomeados para queries SQL
+// NamedArgs gerencia argumentos nomeados para queries SQL usando sql.Named
 type NamedArgs struct {
 	args    []interface{}
-	argMap  map[string]interface{}
 	counter int
 	dialect string
 }
@@ -25,77 +26,81 @@ type NamedArgs struct {
 func NewNamedArgs(dialect string) *NamedArgs {
 	return &NamedArgs{
 		args:    make([]interface{}, 0),
-		argMap:  make(map[string]interface{}),
 		counter: 0,
 		dialect: strings.ToLower(dialect),
 	}
 }
 
-// AddArg adiciona um argumento e retorna o placeholder apropriado
+// AddArg adiciona um argumento usando sql.Named e retorna o placeholder apropriado
 func (na *NamedArgs) AddArg(value interface{}) string {
 	na.counter++
-	na.args = append(na.args, value)
 
-	switch na.dialect {
-	case "oracle":
-		paramName := fmt.Sprintf("param%d", na.counter)
-		na.argMap[paramName] = value
-		return ":" + paramName
-	case "mysql", "postgresql":
-		return "?"
-	default:
-		return "?"
-	}
+	paramName := fmt.Sprintf("param%d", na.counter)
+
+	namedArg := sql.Named(paramName, value)
+	na.args = append(na.args, namedArg)
+
+	return ":" + paramName
 }
 
-// GetArgs retorna os argumentos como slice (para MySQL/PostgreSQL)
+// GetArgs retorna os argumentos como slice de interface{}
 func (na *NamedArgs) GetArgs() []interface{} {
 	return na.args
 }
 
-// GetNamedArgs retorna os argumentos como map (para Oracle)
-func (na *NamedArgs) GetNamedArgs() map[string]interface{} {
-	return na.argMap
+// GetNamedArgs retorna os argumentos como slice para compatibilidade
+func (na *NamedArgs) GetNamedArgs() []interface{} {
+	return na.args
 }
 
-// GetArgsInterface retorna os argumentos no formato apropriado para o driver
-func (na *NamedArgs) GetArgsInterface() interface{} {
-	switch na.dialect {
-	case "oracle":
-		return na.argMap
-	default:
-		return na.args
-	}
-}
-
-// QueryBuilder constrói queries SQL otimizadas
+// QueryBuilder constrói queries SQL a partir de árvores de parse OData
 type QueryBuilder struct {
+	dialect    string
 	nodeMap    NodeMap
 	prepareMap PrepareMap
-	dialect    string
 }
 
-// NewQueryBuilder cria um novo query builder
+// NewQueryBuilder cria um novo QueryBuilder para o dialeto especificado
 func NewQueryBuilder(dialect string) *QueryBuilder {
-	builder := &QueryBuilder{
-		dialect:    dialect,
+	log.Printf("🔍 QueryBuilder - Creating new QueryBuilder for dialect: %s", dialect)
+
+	qb := &QueryBuilder{
+		dialect:    strings.ToLower(dialect),
 		nodeMap:    make(NodeMap),
 		prepareMap: make(PrepareMap),
 	}
 
-	// Configurar mapas baseado no dialeto
-	switch strings.ToLower(dialect) {
+	log.Printf("🔍 QueryBuilder - QueryBuilder struct created, nodeMap initialized")
+
+	// Configura os mapas baseado no dialeto
+	switch qb.dialect {
 	case "mysql":
-		builder.setupMySQLMaps()
+		log.Printf("🔍 QueryBuilder - Setting up MySQL maps")
+		qb.setupMySQLMaps()
 	case "postgresql":
-		builder.setupPostgreSQLMaps()
+		log.Printf("🔍 QueryBuilder - Setting up PostgreSQL maps")
+		qb.setupPostgreSQLMaps()
 	case "oracle":
-		builder.setupOracleMaps()
+		log.Printf("🔍 QueryBuilder - Setting up Oracle maps")
+		qb.setupOracleMaps()
 	default:
-		builder.setupDefaultMaps()
+		log.Printf("🔍 QueryBuilder - Setting up default maps for dialect: %s", qb.dialect)
+		qb.setupDefaultMaps()
 	}
 
-	return builder
+	log.Printf("🔍 QueryBuilder - Maps setup complete, nodeMap has %d entries", len(qb.nodeMap))
+
+	// Verifica se o nodeMap foi inicializado corretamente
+	if qb.nodeMap == nil {
+		log.Printf("❌ QueryBuilder - CRITICAL: nodeMap is nil after setup!")
+		panic("NodeMap is nil after setup")
+	}
+
+	if len(qb.nodeMap) == 0 {
+		log.Printf("❌ QueryBuilder - WARNING: nodeMap is empty after setup")
+	}
+
+	return qb
 }
 
 // setupMySQLMaps configura mapas para MySQL
@@ -237,7 +242,10 @@ func (qb *QueryBuilder) buildNodeExpression(ctx context.Context, node *ParseNode
 		return "?", []interface{}{value}, nil
 
 	case int(FilterTokenNumber):
-		// Número literal
+		// Número literal - usa SemanticReference se disponível (valor tipado original)
+		if node.Token.SemanticReference != nil {
+			return "?", []interface{}{node.Token.SemanticReference}, nil
+		}
 		return "?", []interface{}{node.Token.Value}, nil
 
 	case int(FilterTokenBoolean):
@@ -287,8 +295,18 @@ func (qb *QueryBuilder) buildNodeExpressionNamed(ctx context.Context, node *Pars
 		return placeholder, nil
 
 	case int(FilterTokenNumber):
-		// Número literal
-		placeholder := namedArgs.AddArg(node.Token.Value)
+		// Número literal - usa SemanticReference se disponível (valor tipado original)
+		if node.Token.SemanticReference != nil {
+			placeholder := namedArgs.AddArg(node.Token.SemanticReference)
+			return placeholder, nil
+		}
+
+		// Converte o valor string para o tipo numérico apropriado
+		typedValue, err := qb.parseNumericValue(node.Token.Value)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse numeric value '%s': %w", node.Token.Value, err)
+		}
+		placeholder := namedArgs.AddArg(typedValue)
 		return placeholder, nil
 
 	case int(FilterTokenBoolean):
@@ -398,15 +416,37 @@ func (qb *QueryBuilder) buildBinaryOperatorExpression(ctx context.Context, node 
 
 // buildBinaryOperatorExpressionNamed constrói expressão para operador binário usando argumentos nomeados
 func (qb *QueryBuilder) buildBinaryOperatorExpressionNamed(ctx context.Context, node *ParseNode, metadata EntityMetadata, namedArgs *NamedArgs) (string, error) {
+	log.Printf("🔍 QueryBuilder - buildBinaryOperatorExpressionNamed called")
+
 	if len(node.Children) != 2 {
 		return "", fmt.Errorf("binary operator %s expects 2 children, got %d", node.Token.Value, len(node.Children))
 	}
 
 	operator := node.Token.Value
+	log.Printf("🔍 QueryBuilder - Processing operator: %s", operator)
+
+	// Verifica se o nodeMap está inicializado
+	if qb.nodeMap == nil {
+		log.Printf("❌ QueryBuilder - CRITICAL: nodeMap is nil when accessing operator %s", operator)
+		return "", fmt.Errorf("nodeMap is nil - QueryBuilder not properly initialized")
+	}
+
+	log.Printf("🔍 QueryBuilder - nodeMap has %d entries", len(qb.nodeMap))
+
+	// Lista as chaves disponíveis no nodeMap para debug
+	var availableKeys []string
+	for k := range qb.nodeMap {
+		availableKeys = append(availableKeys, k)
+	}
+	log.Printf("🔍 QueryBuilder - Available operators: %v", availableKeys)
+
 	template, exists := qb.nodeMap[operator]
 	if !exists {
-		return "", fmt.Errorf("unsupported operator: %s", operator)
+		log.Printf("❌ QueryBuilder - Operator %s not found in nodeMap", operator)
+		return "", fmt.Errorf("unsupported operator: %s (available: %v)", operator, availableKeys)
 	}
+
+	log.Printf("🔍 QueryBuilder - Found template for operator %s: %s", operator, template)
 
 	// Constrói expressões para os filhos
 	leftExpr, err := qb.buildNodeExpressionNamed(ctx, node.Children[0], metadata, namedArgs)
@@ -421,6 +461,7 @@ func (qb *QueryBuilder) buildBinaryOperatorExpressionNamed(ctx context.Context, 
 
 	// Aplica template
 	expression := fmt.Sprintf(template, leftExpr, rightExpr)
+	log.Printf("🔍 QueryBuilder - Generated expression: %s", expression)
 
 	return expression, nil
 }
@@ -1417,4 +1458,26 @@ func (qb *QueryBuilder) CombineSearchWithFilter(ctx context.Context, searchSQL, 
 	combinedParams = append(combinedParams, filterParams...)
 
 	return combinedSQL, combinedParams, nil
+}
+
+// parseNumericValue converte um valor string para o tipo numérico apropriado
+func (qb *QueryBuilder) parseNumericValue(value string) (interface{}, error) {
+	// Remove sufixos específicos de tipo se presentes
+	cleanValue := value
+	suffixes := []string{"d", "D", "f", "F", "m", "M"}
+	for _, suffix := range suffixes {
+		cleanValue = strings.TrimSuffix(cleanValue, suffix)
+	}
+
+	// Tenta converter para int64 primeiro (mais comum)
+	if intVal, err := strconv.ParseInt(cleanValue, 10, 64); err == nil {
+		return intVal, nil
+	}
+
+	// Tenta converter para float64 se não for inteiro
+	if floatVal, err := strconv.ParseFloat(cleanValue, 64); err == nil {
+		return floatVal, nil
+	}
+
+	return nil, fmt.Errorf("invalid numeric value: %s", value)
 }

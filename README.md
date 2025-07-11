@@ -1001,7 +1001,3 @@ Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICE
 - [GitHub Discussions](https://github.com/fitlcarlos/godata/discussions) - Para perguntas e discussões
 
 ---
-
-<div align="center">
-  <strong>GoData - Biblioteca OData para Go</strong>
-</div> 

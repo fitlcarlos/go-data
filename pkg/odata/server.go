@@ -248,29 +248,18 @@ func (s *Server) setupEntityRoutes(entityName string) {
 	s.router.Post(prefix+"/"+entityName, postHandlers[0], postHandlers[1:]...)
 
 	// Rota para entidade individual (GET, PUT, PATCH, DELETE)
+	// Usando padrão wildcard para capturar URLs como /odata/FabTarefa(53)
 	getByIdHandlers := append(middlewares, s.handleEntityById)
-	s.router.Get(prefix+"/"+entityName+"({id})", getByIdHandlers[0], getByIdHandlers[1:]...)
+	s.router.Get(prefix+"/"+entityName+"(*)", getByIdHandlers[0], getByIdHandlers[1:]...)
 
 	putHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PUT"), s.handleEntityById)
-	s.router.Put(prefix+"/"+entityName+"({id})", putHandlers[0], putHandlers[1:]...)
+	s.router.Put(prefix+"/"+entityName+"(*)", putHandlers[0], putHandlers[1:]...)
 
 	patchHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PATCH"), s.handleEntityById)
-	s.router.Patch(prefix+"/"+entityName+"({id})", patchHandlers[0], patchHandlers[1:]...)
+	s.router.Patch(prefix+"/"+entityName+"(*)", patchHandlers[0], patchHandlers[1:]...)
 
 	deleteHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "DELETE"), s.handleEntityById)
-	s.router.Delete(prefix+"/"+entityName+"({id})", deleteHandlers[0], deleteHandlers[1:]...)
-
-	getByIdNumHandlers := append(middlewares, s.handleEntityById)
-	s.router.Get(prefix+"/"+entityName+"({id:[0-9]+})", getByIdNumHandlers[0], getByIdNumHandlers[1:]...)
-
-	putNumHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PUT"), s.handleEntityById)
-	s.router.Put(prefix+"/"+entityName+"({id:[0-9]+})", putNumHandlers[0], putNumHandlers[1:]...)
-
-	patchNumHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PATCH"), s.handleEntityById)
-	s.router.Patch(prefix+"/"+entityName+"({id:[0-9]+})", patchNumHandlers[0], patchNumHandlers[1:]...)
-
-	deleteNumHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "DELETE"), s.handleEntityById)
-	s.router.Delete(prefix+"/"+entityName+"({id:[0-9]+})", deleteNumHandlers[0], deleteNumHandlers[1:]...)
+	s.router.Delete(prefix+"/"+entityName+"(*)", deleteHandlers[0], deleteHandlers[1:]...)
 
 	// Rota para count da coleção
 	countHandlers := append(middlewares, s.handleEntityCount)
@@ -279,8 +268,7 @@ func (s *Server) setupEntityRoutes(entityName string) {
 	// Rota OPTIONS para CORS se habilitado
 	if s.config.EnableCORS {
 		s.router.Options(prefix+"/"+entityName, s.handleOptions)
-		s.router.Options(prefix+"/"+entityName+"({id})", s.handleOptions)
-		s.router.Options(prefix+"/"+entityName+"({id:[0-9]+})", s.handleOptions)
+		s.router.Options(prefix+"/"+entityName+"(*)", s.handleOptions)
 	}
 }
 
@@ -652,19 +640,34 @@ func (s *Server) handleEntityCollection(c fiber.Ctx) error {
 
 // handleEntityById lida com operações em uma entidade específica
 func (s *Server) handleEntityById(c fiber.Ctx) error {
-	entityName := s.extractEntityName(c.Path())
+	path := c.Path()
+	s.logger.Printf("🔍 handleEntityById - Path: %s", path)
+
+	entityName := s.extractEntityName(path)
+	s.logger.Printf("🔍 handleEntityById - EntityName: %s", entityName)
+
 	service, exists := s.entities[entityName]
 	if !exists {
+		s.logger.Printf("❌ handleEntityById - Entity '%s' not found", entityName)
 		s.writeError(c, fiber.StatusNotFound, "EntityNotFound", fmt.Sprintf("Entity '%s' not found", entityName))
 		return nil
 	}
 
+	// Verifica se o path tem parênteses para distinguir de collection request
+	if !strings.Contains(path, "(") {
+		s.logger.Printf("❌ handleEntityById - Path sem parênteses, redirecionando para collection")
+		return s.handleEntityCollection(c)
+	}
+
 	// Extrai as chaves da URL
-	keys, err := s.extractKeys(c.Path(), service.GetMetadata())
+	keys, err := s.extractKeys(path, service.GetMetadata())
 	if err != nil {
+		s.logger.Printf("❌ handleEntityById - Erro ao extrair chaves: %v", err)
 		s.writeError(c, fiber.StatusBadRequest, "InvalidKey", err.Error())
 		return nil
 	}
+
+	s.logger.Printf("🔍 handleEntityById - Keys extraídas: %+v", keys)
 
 	switch c.Method() {
 	case "GET":
@@ -683,105 +686,111 @@ func (s *Server) handleEntityById(c fiber.Ctx) error {
 
 // handleGetCollection lida com GET na coleção de entidades
 func (s *Server) handleGetCollection(c fiber.Ctx, service EntityService) error {
-	var queryValues url.Values
-	var err error
-
-	// Extrai o nome da entidade para logging
+	// Extrai o nome da entidade
 	entityName := s.extractEntityName(c.Path())
 
-	queryString := string(c.Request().URI().QueryString())
-	queryValuesURL, parseErr := s.urlParser.ParseQueryFast(queryString)
-	if parseErr != nil {
-		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", fmt.Sprintf("Failed to parse query: %v", parseErr))
-		return nil
-	}
-	queryValues = queryValuesURL
-
-	// Valida a query OData otimizada
-	if err := s.urlParser.ValidateODataQueryFast(queryString); err != nil {
-		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", fmt.Sprintf("Invalid OData query: %v", err))
-		return nil
-	}
-
-	// Parse das opções de consulta
-	options, err := s.parser.ParseQueryOptions(queryValues)
+	// Parse centralizado das opções de consulta
+	options, err := s.parseQueryOptions(c)
 	if err != nil {
 		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", err.Error())
 		return nil
 	}
 
-	// Valida as opções
-	if err := s.parser.ValidateQueryOptions(options); err != nil {
-		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", err.Error())
-		return nil
-	}
-
-	// Log da consulta para debug
-	s.logger.Printf("🔍 Executando consulta para entidade: %s", entityName)
-	if options.Expand != nil {
-		s.logger.Printf("🔍 Expand solicitado: %v", options.Expand)
-	}
-	if options.Filter != nil {
-		s.logger.Printf("🔍 Filtro aplicado: %s", options.Filter.RawValue)
-	}
-
-	// Executa a consulta
-	response, err := service.Query(c.Context(), options)
+	// Executa consulta centralizada com eventos
+	response, err := s.handleEntityQueryWithEvents(c, service, options, entityName, true)
 	if err != nil {
-		s.logger.Printf("❌ Erro na consulta: %v", err)
 		s.writeError(c, fiber.StatusInternalServerError, "QueryError", err.Error())
 		return nil
 	}
 
-	// Dispara evento OnEntityList após a consulta
-	if response != nil && response.Value != nil {
-		eventCtx := createEventContext(c, entityName)
-		if results, ok := response.Value.([]interface{}); ok {
-			args := NewEntityListArgs(eventCtx, options, results)
+	// Constrói resposta OData centralizada
+	odataResponse := s.buildODataResponse(response, true, service.GetMetadata())
 
-			// Definir TotalCount corretamente
-			if response.Count != nil {
-				args.TotalCount = *response.Count
-			} else {
-				// Se Count não estiver disponível, usar o tamanho dos resultados
-				args.TotalCount = int64(len(results))
-			}
-
-			// Definir se filtro foi aplicado
-			args.FilterApplied = options.Filter != nil
-
-			if err := s.eventManager.Emit(args); err != nil {
-				s.logger.Printf("❌ Erro no evento OnEntityList: %v", err)
-			}
-		}
-	}
-
-	s.logger.Printf("✅ Consulta executada com sucesso")
-	return c.JSON(response)
+	return c.JSON(odataResponse)
 }
 
 // handleGetEntity lida com GET de uma entidade específica
 func (s *Server) handleGetEntity(c fiber.Ctx, service EntityService, keys map[string]interface{}) error {
-	entity, err := service.Get(c.Context(), keys)
+	s.logger.Printf("🔍 handleGetEntity - Starting with keys: %+v", keys)
+
+	// Log dos tipos das chaves para debug
+	for k, v := range keys {
+		s.logger.Printf("🔍 handleGetEntity - Key '%s': value=%v, type=%T", k, v, v)
+	}
+
+	// Extrai o nome da entidade
+	entityName := s.extractEntityName(c.Path())
+
+	// Parse das opções de consulta da URL (caso existam)
+	options, err := s.parseQueryOptions(c)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
-		} else {
-			s.writeError(c, fiber.StatusInternalServerError, "QueryError", err.Error())
-		}
+		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", err.Error())
 		return nil
 	}
 
-	// Dispara evento OnEntityGet após recuperar a entidade
-	entityName := s.extractEntityName(c.Path())
-	eventCtx := createEventContext(c, entityName)
-	args := NewEntityGetArgs(eventCtx, keys, entity)
-
-	if err := s.eventManager.Emit(args); err != nil {
-		s.logger.Printf("❌ Erro no evento OnEntityGet: %v", err)
+	// Constrói filtro para as chaves específicas usando o método centralizado do BaseEntityService
+	baseService, ok := service.(*BaseEntityService)
+	if !ok {
+		s.writeError(c, fiber.StatusInternalServerError, "ServiceError", "Service type not supported")
+		return nil
 	}
 
-	return c.JSON(entity)
+	// Constrói filtro tipado para as chaves
+	keyFilter, err := baseService.BuildTypedKeyFilter(c.Context(), keys)
+	if err != nil {
+		s.logger.Printf("❌ handleGetEntity - Failed to build key filter: %v", err)
+		s.writeError(c, fiber.StatusBadRequest, "InvalidKey", err.Error())
+		return nil
+	}
+
+	// Combina filtro de chaves com filtro da query (se houver)
+	if options.Filter != nil {
+		// Se já há um filtro na query, combina com AND
+		s.logger.Printf("🔍 handleGetEntity - Combining key filter with existing filter")
+		combinedFilter := fmt.Sprintf("(%s) and (%s)", keyFilter.RawValue, options.Filter.RawValue)
+
+		// Cria novo filtro combinado (implementação básica - idealmente deveria combinar as árvores)
+		keyFilter.RawValue = combinedFilter
+	}
+
+	// Aplica o filtro de chaves
+	options.Filter = keyFilter
+
+	// Executa consulta centralizada com eventos
+	response, err := s.handleEntityQueryWithEvents(c, service, options, entityName, false)
+	if err != nil {
+		s.writeError(c, fiber.StatusInternalServerError, "QueryError", err.Error())
+		return nil
+	}
+
+	// Verifica se a entidade foi encontrada
+	if response == nil || response.Value == nil {
+		s.writeError(c, fiber.StatusNotFound, "EntityNotFound", "Entity not found")
+		return nil
+	}
+
+	if results, ok := response.Value.([]interface{}); ok {
+		if len(results) == 0 {
+			s.writeError(c, fiber.StatusNotFound, "EntityNotFound", "Entity not found")
+			return nil
+		}
+	}
+
+	s.logger.Printf("✅ handleGetEntity - Entity retrieved successfully")
+
+	// Dispara evento OnEntityGet específico com as chaves reais
+	eventCtx := createEventContext(c, entityName)
+	if results, ok := response.Value.([]interface{}); ok && len(results) > 0 {
+		args := NewEntityGetArgs(eventCtx, keys, results[0])
+		if err := s.eventManager.Emit(args); err != nil {
+			s.logger.Printf("❌ Erro no evento OnEntityGet: %v", err)
+		}
+	}
+
+	// Constrói resposta OData centralizada
+	odataResponse := s.buildODataResponse(response, false, service.GetMetadata())
+
+	return c.JSON(odataResponse)
 }
 
 // handleCreateEntity lida com POST para criar uma entidade
@@ -864,34 +873,14 @@ func (s *Server) handleEntityCount(c fiber.Ctx) error {
 		return nil
 	}
 
-	// Parse das opções de consulta usando o parser customizado
-	queryString := string(c.Request().URI().QueryString())
-	queryValues, err := s.urlParser.ParseQuery(queryString)
-	if err != nil {
-		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", fmt.Sprintf("Failed to parse query: %v", err))
-		return nil
-	}
-
-	// Valida a query OData
-	if err := s.urlParser.ValidateODataQuery(queryString); err != nil {
-		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", fmt.Sprintf("Invalid OData query: %v", err))
-		return nil
-	}
-
-	// Parse das opções de consulta (principalmente $filter)
-	options, err := s.parser.ParseQueryOptions(queryValues)
+	// Parse centralizado das opções de consulta
+	options, err := s.parseQueryOptions(c)
 	if err != nil {
 		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", err.Error())
 		return nil
 	}
 
-	// Valida as opções
-	if err := s.parser.ValidateQueryOptions(options); err != nil {
-		s.writeError(c, fiber.StatusBadRequest, "InvalidQuery", err.Error())
-		return nil
-	}
-
-	// Obtém a contagem usando o método específico
+	// Obtém a contagem usando o método centralizado
 	count, err := s.getEntityCount(c.Context(), service, options)
 	if err != nil {
 		s.writeError(c, fiber.StatusInternalServerError, "CountError", err.Error())
@@ -960,6 +949,8 @@ func (s *Server) extractEntityName(path string) string {
 func (s *Server) extractKeys(path string, metadata EntityMetadata) (map[string]interface{}, error) {
 	keys := make(map[string]interface{})
 
+	s.logger.Printf("🔍 extractKeys - Path: %s", path)
+
 	// Encontra a parte entre parênteses
 	start := strings.Index(path, "(")
 	end := strings.LastIndex(path, ")")
@@ -968,6 +959,7 @@ func (s *Server) extractKeys(path string, metadata EntityMetadata) (map[string]i
 	}
 
 	keyString := path[start+1 : end]
+	s.logger.Printf("🔍 extractKeys - KeyString: %s", keyString)
 
 	// Identifica as chaves primárias dos metadados
 	var primaryKeys []PropertyMetadata
@@ -976,6 +968,8 @@ func (s *Server) extractKeys(path string, metadata EntityMetadata) (map[string]i
 			primaryKeys = append(primaryKeys, prop)
 		}
 	}
+
+	s.logger.Printf("🔍 extractKeys - Primary keys: %+v", primaryKeys)
 
 	if len(primaryKeys) == 0 {
 		return nil, fmt.Errorf("no primary keys defined for entity")
@@ -989,6 +983,7 @@ func (s *Server) extractKeys(path string, metadata EntityMetadata) (map[string]i
 			return nil, fmt.Errorf("failed to parse key value for %s: %w", key.Name, err)
 		}
 		keys[key.Name] = value
+		s.logger.Printf("🔍 extractKeys - Single key result: %+v", keys)
 		return keys, nil
 	}
 
@@ -1025,33 +1020,59 @@ func (s *Server) extractKeys(path string, metadata EntityMetadata) (map[string]i
 		keys[keyName] = value
 	}
 
+	s.logger.Printf("🔍 extractKeys - Composite key result: %+v", keys)
 	return keys, nil
 }
 
 // parseKeyValue converte uma string em valor do tipo apropriado
 func (s *Server) parseKeyValue(value, dataType string) (interface{}, error) {
+	s.logger.Printf("🔍 parseKeyValue - Original value: '%s', dataType: '%s'", value, dataType)
+
 	// Remove aspas se presentes
 	if len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'' {
 		value = value[1 : len(value)-1]
+		s.logger.Printf("🔍 parseKeyValue - Removed quotes, new value: '%s'", value)
 	}
+
+	var result interface{}
+	var err error
 
 	switch dataType {
 	case "string":
-		return value, nil
+		result = value
 	case "int32", "int":
-		return strconv.Atoi(value)
+		// Converte para int mas garante que seja tratado como int64 internamente
+		intVal, parseErr := strconv.ParseInt(value, 10, 32)
+		if parseErr != nil {
+			err = parseErr
+		} else {
+			result = intVal // Retorna int64 para compatibilidade
+		}
 	case "int64":
-		return strconv.ParseInt(value, 10, 64)
+		result, err = strconv.ParseInt(value, 10, 64)
 	case "float32":
-		val, err := strconv.ParseFloat(value, 32)
-		return float32(val), err
+		val, parseErr := strconv.ParseFloat(value, 32)
+		if parseErr != nil {
+			err = parseErr
+		} else {
+			result = float64(val) // Converte para float64 para compatibilidade
+		}
 	case "float64":
-		return strconv.ParseFloat(value, 64)
+		result, err = strconv.ParseFloat(value, 64)
 	case "bool":
-		return strconv.ParseBool(value)
+		result, err = strconv.ParseBool(value)
 	default:
-		return value, nil
+		s.logger.Printf("⚠️ parseKeyValue - Unknown dataType '%s', treating as string", dataType)
+		result = value
 	}
+
+	if err != nil {
+		s.logger.Printf("❌ parseKeyValue - Error converting '%s' to %s: %v", value, dataType, err)
+		return nil, fmt.Errorf("failed to parse key value '%s' as %s: %w", value, dataType, err)
+	}
+
+	s.logger.Printf("✅ parseKeyValue - Converted to: %v (type: %T)", result, result)
+	return result, nil
 }
 
 // buildEntityURL constrói a URL para uma entidade específica
@@ -1202,6 +1223,216 @@ func (s *Server) buildEntitySets() []map[string]interface{} {
 	}
 
 	return entitySets
+}
+
+// buildSingleEntityResponse constrói resposta OData para uma entidade única
+func (s *Server) buildSingleEntityResponse(entity interface{}, metadata EntityMetadata) map[string]interface{} {
+	// Cria um map para a resposta
+	response := make(map[string]interface{})
+
+	// Adiciona o contexto OData
+	response["@odata.context"] = fmt.Sprintf("$metadata#%s", metadata.Name)
+
+	// Se a entidade é um OrderedEntity, preserva a ordem e navigation links
+	if orderedEntity, ok := entity.(*OrderedEntity); ok {
+		// Adiciona todas as propriedades da entidade
+		for _, prop := range orderedEntity.Properties {
+			response[prop.Name] = prop.Value
+		}
+
+		// Adiciona navigation links
+		for _, navLink := range orderedEntity.NavigationLinks {
+			response[fmt.Sprintf("%s@odata.navigationLink", navLink.Name)] = navLink.URL
+		}
+	} else if entityMap, ok := entity.(map[string]interface{}); ok {
+		// Se é um map, copia todas as propriedades
+		for key, value := range entityMap {
+			response[key] = value
+		}
+	} else {
+		// Para outros tipos, tenta converter usando reflection
+		// Mas por enquanto, apenas adiciona como "data"
+		response["data"] = entity
+	}
+
+	return response
+}
+
+// parseQueryOptions centraliza o parse das opções de consulta OData
+func (s *Server) parseQueryOptions(c fiber.Ctx) (QueryOptions, error) {
+	var queryValues url.Values
+	var err error
+
+	// Extrai query string
+	queryString := string(c.Request().URI().QueryString())
+
+	// Parse rápido da query string
+	queryValuesURL, parseErr := s.urlParser.ParseQueryFast(queryString)
+	if parseErr != nil {
+		return QueryOptions{}, fmt.Errorf("failed to parse query: %w", parseErr)
+	}
+	queryValues = queryValuesURL
+
+	// Valida a query OData
+	if err := s.urlParser.ValidateODataQueryFast(queryString); err != nil {
+		return QueryOptions{}, fmt.Errorf("invalid OData query: %w", err)
+	}
+
+	// Parse das opções de consulta
+	options, err := s.parser.ParseQueryOptions(queryValues)
+	if err != nil {
+		return QueryOptions{}, fmt.Errorf("failed to parse query options: %w", err)
+	}
+
+	// Valida as opções
+	if err := s.parser.ValidateQueryOptions(options); err != nil {
+		return QueryOptions{}, fmt.Errorf("invalid query options: %w", err)
+	}
+
+	return options, nil
+}
+
+// executeEntityQuery centraliza a execução de consultas para entidades
+func (s *Server) executeEntityQuery(ctx context.Context, service EntityService, options QueryOptions, entityName string) (*ODataResponse, error) {
+	// Log da consulta para debug
+	s.logger.Printf("🔍 Executando consulta para entidade: %s", entityName)
+	if options.Expand != nil {
+		s.logger.Printf("🔍 Expand solicitado: %v", options.Expand)
+	}
+	if options.Filter != nil {
+		s.logger.Printf("🔍 Filtro aplicado: %s", options.Filter.RawValue)
+	}
+
+	// Executa a consulta
+	response, err := service.Query(ctx, options)
+	if err != nil {
+		s.logger.Printf("❌ Erro na consulta: %v", err)
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	s.logger.Printf("✅ Consulta executada com sucesso")
+	return response, nil
+}
+
+// handleEntityQueryWithEvents executa consulta e dispara eventos apropriados
+func (s *Server) handleEntityQueryWithEvents(c fiber.Ctx, service EntityService, options QueryOptions, entityName string, isCollection bool) (*ODataResponse, error) {
+	// Executa a consulta
+	response, err := s.executeEntityQuery(c.Context(), service, options, entityName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dispara eventos apropriados
+	if response != nil && response.Value != nil {
+		eventCtx := createEventContext(c, entityName)
+
+		if isCollection {
+			// Para collections, dispara evento OnEntityList
+			if results, ok := response.Value.([]interface{}); ok {
+				args := NewEntityListArgs(eventCtx, options, results)
+
+				// Definir TotalCount corretamente
+				if response.Count != nil {
+					args.TotalCount = *response.Count
+				} else {
+					args.TotalCount = int64(len(results))
+				}
+
+				// Definir se filtro foi aplicado
+				args.FilterApplied = options.Filter != nil
+
+				if err := s.eventManager.Emit(args); err != nil {
+					s.logger.Printf("❌ Erro no evento OnEntityList: %v", err)
+				}
+			}
+		} else {
+			// Para entidades específicas, dispara evento OnEntityGet
+			if results, ok := response.Value.([]interface{}); ok && len(results) > 0 {
+				// Extrai chaves da URL para o evento
+				keys := make(map[string]interface{})
+				if options.Filter != nil {
+					// Tenta extrair chaves do filtro (implementação básica)
+					keys["extracted_from_filter"] = options.Filter.RawValue
+				}
+
+				args := NewEntityGetArgs(eventCtx, keys, results[0])
+				if err := s.eventManager.Emit(args); err != nil {
+					s.logger.Printf("❌ Erro no evento OnEntityGet: %v", err)
+				}
+			}
+		}
+	}
+
+	return response, nil
+}
+
+// buildODataResponse centraliza a construção de respostas OData
+func (s *Server) buildODataResponse(response *ODataResponse, isCollection bool, metadata EntityMetadata) interface{} {
+	if response == nil {
+		return nil
+	}
+
+	if isCollection {
+		// Para collections, retorna a resposta completa
+		return response
+	} else {
+		// Para entidades específicas, extrai a primeira entidade e adiciona contexto
+		if results, ok := response.Value.([]interface{}); ok && len(results) > 0 {
+			entity := results[0]
+
+			// Se é OrderedEntity, cria resposta ordenada com contexto
+			if orderedEntity, ok := entity.(*OrderedEntity); ok {
+				// Cria resposta ordenada seguindo a ordem dos metadados
+				entityResponse := NewOrderedEntityResponse(
+					fmt.Sprintf("$metadata#%s", metadata.Name),
+					metadata,
+				)
+
+				// Adiciona propriedades na ordem dos metadados da entidade
+				for _, metaProp := range metadata.Properties {
+					if !metaProp.IsNavigation {
+						if value, exists := orderedEntity.Get(metaProp.Name); exists {
+							entityResponse.AddField(metaProp.Name, value)
+						}
+					}
+				}
+
+				// Adiciona propriedades que não estão nos metadados (na ordem original da entidade)
+				addedFields := make(map[string]bool)
+				for _, metaProp := range metadata.Properties {
+					if !metaProp.IsNavigation {
+						addedFields[metaProp.Name] = true
+					}
+				}
+
+				for _, prop := range orderedEntity.Properties {
+					if !addedFields[prop.Name] {
+						entityResponse.AddField(prop.Name, prop.Value)
+					}
+				}
+
+				// Adiciona navigation links na ordem dos metadados
+				for _, metaProp := range metadata.Properties {
+					if metaProp.IsNavigation {
+						for _, navLink := range orderedEntity.NavigationLinks {
+							if navLink.Name == metaProp.Name {
+								entityResponse.AddNavigationLink(navLink.Name, navLink.URL)
+								break
+							}
+						}
+					}
+				}
+
+				return entityResponse
+			}
+
+			// Para outros tipos, usa o método buildSingleEntityResponse
+			return s.buildSingleEntityResponse(entity, metadata)
+		}
+
+		// Se não há resultados, retorna nil
+		return nil
+	}
 }
 
 // writeJSON escreve uma resposta JSON

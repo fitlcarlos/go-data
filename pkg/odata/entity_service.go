@@ -196,42 +196,237 @@ func (s *BaseEntityService) Query(ctx context.Context, options QueryOptions) (*O
 
 // Get recupera uma entidade específica pelas chaves
 func (s *BaseEntityService) Get(ctx context.Context, keys map[string]interface{}) (interface{}, error) {
-	// Constrói a query SQL para buscar por chaves
-	filterStr := s.buildKeyFilter(keys)
-	filterQuery, err := ParseFilterString(ctx, filterStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse key filter: %w", err)
+	log.Printf("🔍 BaseEntityService.Get - Starting with keys: %+v", keys)
+
+	// Log dos tipos das chaves para debug
+	for k, v := range keys {
+		log.Printf("🔍 BaseEntityService.Get - Key '%s': value=%v, type=%T", k, v, v)
 	}
 
-	topQuery := GoDataTopQuery(1)
+	filterQuery, err := s.BuildTypedKeyFilter(ctx, keys)
+	if err != nil {
+		log.Printf("❌ BaseEntityService.Get - Failed to build typed key filter: %v", err)
+		return nil, fmt.Errorf("failed to build typed key filter: %w", err)
+	}
+
 	options := QueryOptions{
 		Filter: filterQuery,
-		Top:    &topQuery,
+		// Top: removido para evitar subquery desnecessária no Oracle
 	}
+
+	log.Printf("🔍 BaseEntityService.Get - Options: %+v", options)
 
 	query, args, err := s.provider.BuildSelectQuery(s.metadata, options)
 	if err != nil {
+		log.Printf("❌ BaseEntityService.Get - Failed to build select query: %v", err)
 		return nil, fmt.Errorf("failed to build select query: %w", err)
+	}
+
+	log.Printf("🔍 BaseEntityService.Get - Query: %s", query)
+	log.Printf("🔍 BaseEntityService.Get - Args: %+v", args)
+
+	// Log dos tipos dos args para debug
+	for i, arg := range args {
+		log.Printf("🔍 BaseEntityService.Get - Arg[%d]: value=%v, type=%T", i, arg, arg)
 	}
 
 	// Executa a query
 	rows, err := s.executeQuery(ctx, query, args)
 	if err != nil {
+		log.Printf("❌ BaseEntityService.Get - Failed to execute query: %v", err)
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
 	defer rows.Close()
 
+	log.Printf("✅ BaseEntityService.Get - Query executed successfully")
+
 	// Converte os resultados (sem expand para Get)
 	results, err := s.scanRows(rows, []ExpandOption{})
 	if err != nil {
+		log.Printf("❌ BaseEntityService.Get - Failed to scan rows: %v", err)
 		return nil, fmt.Errorf("failed to scan rows: %w", err)
 	}
 
 	if len(results) == 0 {
+		log.Printf("❌ BaseEntityService.Get - Entity not found")
 		return nil, fmt.Errorf("entity not found")
 	}
 
+	log.Printf("✅ BaseEntityService.Get - Entity found successfully")
 	return results[0], nil
+}
+
+// buildTypedPropertyFilter constrói um filtro para uma propriedade preservando o tipo do valor
+func (s *BaseEntityService) buildTypedPropertyFilter(ctx context.Context, propertyName string, propertyValue interface{}) (*GoDataFilterQuery, error) {
+	log.Printf("🔍 buildTypedPropertyFilter - Starting with property: %s, value: %v, type: %T", propertyName, propertyValue, propertyValue)
+
+	// Cria os nós da árvore de parse preservando os tipos
+	propertyNode := &ParseNode{
+		Token: &Token{
+			Type:  int(FilterTokenProperty),
+			Value: propertyName,
+		},
+		Children: []*ParseNode{},
+	}
+
+	valueNode := &ParseNode{
+		Token: &Token{
+			Type:              s.getTokenTypeForValue(propertyValue),
+			Value:             fmt.Sprintf("%v", propertyValue), // Token.Value é string
+			SemanticReference: propertyValue,                    // Preserva o valor tipado original
+		},
+		Children: []*ParseNode{},
+	}
+
+	// Cria o nó de comparação (eq)
+	comparisonNode := &ParseNode{
+		Token: &Token{
+			Type:  int(FilterTokenComparison),
+			Value: "eq",
+		},
+		Children: []*ParseNode{propertyNode, valueNode},
+	}
+
+	filterQuery := &GoDataFilterQuery{
+		RawValue: fmt.Sprintf("%s eq %v", propertyName, propertyValue), // Para logging
+		Tree:     comparisonNode,
+	}
+
+	log.Printf("✅ buildTypedPropertyFilter - Created typed filter")
+	return filterQuery, nil
+}
+
+// BuildTypedKeyFilter constrói um filtro preservando os tipos das chaves
+func (s *BaseEntityService) BuildTypedKeyFilter(ctx context.Context, keys map[string]interface{}) (*GoDataFilterQuery, error) {
+	log.Printf("🔍 buildTypedKeyFilter - Starting with keys: %+v", keys)
+
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no keys provided")
+	}
+
+	// Para uma única chave, cria um nó de comparação simples
+	if len(keys) == 1 {
+		for keyName, keyValue := range keys {
+			log.Printf("🔍 buildTypedKeyFilter - Single key '%s': value=%v, type=%T", keyName, keyValue, keyValue)
+
+			// Cria os nós da árvore de parse preservando os tipos
+			propertyNode := &ParseNode{
+				Token: &Token{
+					Type:  int(FilterTokenProperty),
+					Value: keyName,
+				},
+				Children: []*ParseNode{},
+			}
+
+			valueNode := &ParseNode{
+				Token: &Token{
+					Type:              s.getTokenTypeForValue(keyValue),
+					Value:             fmt.Sprintf("%v", keyValue), // Token.Value é string
+					SemanticReference: keyValue,                    // Preserva o valor tipado original
+				},
+				Children: []*ParseNode{},
+			}
+
+			// Cria o nó de comparação (eq)
+			comparisonNode := &ParseNode{
+				Token: &Token{
+					Type:  int(FilterTokenComparison),
+					Value: "eq",
+				},
+				Children: []*ParseNode{propertyNode, valueNode},
+			}
+
+			filterQuery := &GoDataFilterQuery{
+				RawValue: fmt.Sprintf("%s eq %v", keyName, keyValue), // Para logging
+				Tree:     comparisonNode,
+			}
+
+			log.Printf("✅ buildTypedKeyFilter - Created single key filter")
+			return filterQuery, nil
+		}
+	}
+
+	// Para múltiplas chaves, cria nós AND concatenados
+	var nodes []*ParseNode
+	var filterParts []string
+
+	for keyName, keyValue := range keys {
+		log.Printf("🔍 buildTypedKeyFilter - Multi key '%s': value=%v, type=%T", keyName, keyValue, keyValue)
+
+		// Cria os nós para esta chave
+		propertyNode := &ParseNode{
+			Token: &Token{
+				Type:  int(FilterTokenProperty),
+				Value: keyName,
+			},
+			Children: []*ParseNode{},
+		}
+
+		valueNode := &ParseNode{
+			Token: &Token{
+				Type:              s.getTokenTypeForValue(keyValue),
+				Value:             fmt.Sprintf("%v", keyValue), // Token.Value é string
+				SemanticReference: keyValue,                    // Preserva o valor tipado original
+			},
+			Children: []*ParseNode{},
+		}
+
+		// Cria o nó de comparação
+		comparisonNode := &ParseNode{
+			Token: &Token{
+				Type:  int(FilterTokenComparison),
+				Value: "eq",
+			},
+			Children: []*ParseNode{propertyNode, valueNode},
+		}
+
+		nodes = append(nodes, comparisonNode)
+		filterParts = append(filterParts, fmt.Sprintf("%s eq %v", keyName, keyValue))
+	}
+
+	// Combina os nós com AND se há múltiplas chaves
+	var rootNode *ParseNode
+	if len(nodes) == 1 {
+		rootNode = nodes[0]
+	} else {
+		// Cria a cadeia de nós AND
+		rootNode = nodes[0]
+		for i := 1; i < len(nodes); i++ {
+			andNode := &ParseNode{
+				Token: &Token{
+					Type:  int(FilterTokenLogical),
+					Value: "and",
+				},
+				Children: []*ParseNode{rootNode, nodes[i]},
+			}
+			rootNode = andNode
+		}
+	}
+
+	filterQuery := &GoDataFilterQuery{
+		RawValue: strings.Join(filterParts, " and "), // Para logging
+		Tree:     rootNode,
+	}
+
+	log.Printf("✅ buildTypedKeyFilter - Created multi-key filter with %d keys", len(keys))
+	return filterQuery, nil
+}
+
+// getTokenTypeForValue retorna o tipo de token apropriado baseado no tipo do valor
+func (s *BaseEntityService) getTokenTypeForValue(value interface{}) int {
+	switch value.(type) {
+	case string:
+		return int(FilterTokenString)
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return int(FilterTokenNumber)
+	case float32, float64:
+		return int(FilterTokenNumber)
+	case bool:
+		return int(FilterTokenBoolean)
+	default:
+		// Para tipos desconhecidos, trata como string
+		return int(FilterTokenString)
+	}
 }
 
 // Create cria uma nova entidade
@@ -530,18 +725,31 @@ func (s *BaseEntityService) GetCount(ctx context.Context, options QueryOptions) 
 
 // buildKeyFilter constrói um filtro baseado nas chaves
 func (s *BaseEntityService) buildKeyFilter(keys map[string]interface{}) string {
+	log.Printf("🔍 buildKeyFilter - Starting with keys: %+v", keys)
+
 	var filters []string
 	for key, value := range keys {
+		log.Printf("🔍 buildKeyFilter - Processing key '%s': value=%v, type=%T", key, value, value)
+
 		switch v := value.(type) {
 		case string:
-			filters = append(filters, fmt.Sprintf("%s eq '%s'", key, v))
+			filter := fmt.Sprintf("%s eq '%s'", key, v)
+			log.Printf("🔍 buildKeyFilter - String filter: %s", filter)
+			filters = append(filters, filter)
 		case int, int32, int64:
-			filters = append(filters, fmt.Sprintf("%s eq %v", key, v))
+			filter := fmt.Sprintf("%s eq %v", key, v)
+			log.Printf("🔍 buildKeyFilter - Numeric filter: %s", filter)
+			filters = append(filters, filter)
 		default:
-			filters = append(filters, fmt.Sprintf("%s eq '%v'", key, v))
+			filter := fmt.Sprintf("%s eq '%v'", key, v)
+			log.Printf("🔍 buildKeyFilter - Default filter: %s", filter)
+			filters = append(filters, filter)
 		}
 	}
-	return strings.Join(filters, " and ")
+
+	result := strings.Join(filters, " and ")
+	log.Printf("🔍 buildKeyFilter - Final filter: %s", result)
+	return result
 }
 
 // entityToMap converte uma entidade para map
@@ -787,13 +995,11 @@ func (s *BaseEntityService) findRelatedEntities(ctx context.Context, navProperty
 		return nil, fmt.Errorf("failed to convert filter value: %w", err)
 	}
 
-	// Cria um filtro OData com o valor real (não placeholder) - sanitizado para Oracle
-	relationshipFilter := s.createSanitizedFilter(filterProperty, convertedValue)
-
-	// Parse o filter string para GoDataFilterQuery com timeout apropriado
-	filterQuery, err := s.parseFilterWithTimeout(ctx, relationshipFilter)
+	// CORREÇÃO: Cria um filtro tipado preservando os tipos das propriedades
+	// similar ao buildTypedKeyFilter usado no método Get
+	filterQuery, err := s.buildTypedPropertyFilter(ctx, filterProperty, convertedValue)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse filter: %w", err)
+		return nil, fmt.Errorf("failed to build typed property filter: %w", err)
 	}
 
 	// Converte expandOption.Count para GoDataCountQuery
@@ -1476,23 +1682,34 @@ func (s *BaseEntityService) formatFilterValueSafe(value interface{}) string {
 
 // executeQuery executa uma query com os argumentos apropriados para o provider
 func (s *BaseEntityService) executeQuery(ctx context.Context, query string, args []interface{}) (*sql.Rows, error) {
+	log.Printf("🔍 executeQuery - Starting execution")
+	log.Printf("🔍 executeQuery - Query: %s", query)
+	log.Printf("🔍 executeQuery - Args: %+v", args)
+	log.Printf("🔍 executeQuery - Provider driver: %s", s.provider.GetDriverName())
+
 	// Verifica se a conexão está disponível
 	conn := s.provider.GetConnection()
 	if conn == nil {
+		log.Printf("❌ executeQuery - Database connection is nil")
 		return nil, fmt.Errorf("database connection is nil - make sure the provider is properly connected")
 	}
 
-	// Verifica se é Oracle e se os argumentos são nomeados
-	if len(args) == 1 {
-		// Verifica se o primeiro argumento é um map[string]interface{}
-		if namedArgs, ok := args[0].(map[string]interface{}); ok {
-			// Executa com argumentos nomeados
-			return conn.QueryContext(ctx, query, namedArgs)
-		}
+	log.Printf("✅ executeQuery - Database connection OK")
+
+	// O driver Oracle irá reconhecer automaticamente os argumentos nomeados
+	for i, arg := range args {
+		log.Printf("🔍 executeQuery - Arg[%d]: value=%v, type=%T", i, arg, arg)
 	}
 
-	// Executa com argumentos posicionais (MySQL, PostgreSQL)
-	return conn.QueryContext(ctx, query, args...)
+	log.Printf("🔍 executeQuery - Using sql.Named arguments")
+
+	rows, err := conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		log.Printf("❌ executeQuery - Error with sql.Named arguments: %v", err)
+		return nil, err
+	}
+	log.Printf("✅ executeQuery - sql.Named arguments query executed successfully")
+	return rows, nil
 }
 
 // executeExec executa um comando com os argumentos apropriados para o provider
@@ -1503,16 +1720,6 @@ func (s *BaseEntityService) executeExec(ctx context.Context, query string, args 
 		return nil, fmt.Errorf("database connection is nil - make sure the provider is properly connected")
 	}
 
-	// Verifica se é Oracle e se os argumentos são nomeados
-	if s.provider.GetDriverName() == "oracle" && len(args) == 1 {
-		// Verifica se o primeiro argumento é um map[string]interface{}
-		if namedArgs, ok := args[0].(map[string]interface{}); ok {
-			// Executa com argumentos nomeados
-			return conn.ExecContext(ctx, query, namedArgs)
-		}
-	}
-
-	// Executa com argumentos posicionais (MySQL, PostgreSQL)
 	return conn.ExecContext(ctx, query, args...)
 }
 
