@@ -5,26 +5,29 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fitlcarlos/godata/pkg/odata"
-
 	_ "github.com/sijms/go-ora/v2"
 )
 
-// OracleProvider implementa o provider para Oracle
+// OracleProvider implementa o DatabaseProvider para Oracle
 type OracleProvider struct {
-	BaseProvider
+	*BaseProvider
 }
 
-// NewOracleProvider cria uma nova instância do provider Oracle
-func NewOracleProvider() *OracleProvider {
+// NewOracleProvider cria um novo OracleProvider
+func NewOracleProvider(connection *sql.DB) *OracleProvider {
 	return &OracleProvider{
-		BaseProvider: BaseProvider{
-			driverName: "oracle",
-		},
+		BaseProvider: NewBaseProvider(connection, "oracle"),
 	}
+}
+
+// GetDriverName retorna o nome do driver
+func (p *OracleProvider) GetDriverName() string {
+	return "oracle"
 }
 
 // Connect conecta ao banco Oracle com configurações otimizadas
@@ -100,8 +103,7 @@ func (p *OracleProvider) BuildSelectQuery(entity odata.EntityMetadata, options o
 		}
 		if whereClause != "" {
 			query += " WHERE " + whereClause
-			// Para Oracle, args será um map[string]interface{}
-			args = []interface{}{namedArgs}
+			args = namedArgs
 		}
 	}
 
@@ -154,7 +156,8 @@ func (p *OracleProvider) buildSanitizedWhereClause(ctx context.Context, tree *od
 	default:
 	}
 
-	whereClause, whereArgs, err := p.queryBuilder.BuildWhereClause(ctx, tree, entity)
+	qb := p.GetQueryBuilder()
+	whereClause, whereArgs, err := qb.BuildWhereClause(ctx, tree, entity)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to build where clause: %w", err)
 	}
@@ -166,7 +169,7 @@ func (p *OracleProvider) buildSanitizedWhereClause(ctx context.Context, tree *od
 }
 
 // buildSanitizedWhereClauseNamed constrói cláusula WHERE com sanitização para Oracle usando argumentos nomeados
-func (p *OracleProvider) buildSanitizedWhereClauseNamed(ctx context.Context, tree *odata.ParseNode, entity odata.EntityMetadata) (string, map[string]interface{}, error) {
+func (p *OracleProvider) buildSanitizedWhereClauseNamed(ctx context.Context, tree *odata.ParseNode, entity odata.EntityMetadata) (string, []interface{}, error) {
 	// Verifica timeout antes de processar
 	select {
 	case <-ctx.Done():
@@ -175,7 +178,8 @@ func (p *OracleProvider) buildSanitizedWhereClauseNamed(ctx context.Context, tre
 	}
 
 	namedArgs := odata.NewNamedArgs("oracle")
-	whereClause, err := p.queryBuilder.BuildWhereClauseNamed(ctx, tree, entity, namedArgs)
+	qb := p.GetQueryBuilder()
+	whereClause, err := qb.BuildWhereClauseNamed(ctx, tree, entity, namedArgs)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to build where clause: %w", err)
 	}
@@ -183,7 +187,7 @@ func (p *OracleProvider) buildSanitizedWhereClauseNamed(ctx context.Context, tre
 	// Sanitiza a cláusula WHERE para Oracle
 	whereClause = p.sanitizeOracleQuery(whereClause)
 
-	return whereClause, namedArgs.GetNamedArgs(), nil
+	return whereClause, namedArgs.GetArgs(), nil
 }
 
 // sanitizeOracleQuery remove caracteres inválidos e normaliza a query para Oracle
@@ -278,7 +282,7 @@ func (p *OracleProvider) BuildInsertQuery(entity odata.EntityMetadata, data map[
 	query = p.sanitizeOracleQuery(query)
 
 	// Retorna o map como um slice para compatibilidade
-	return query, []interface{}{namedArgs.GetNamedArgs()}, nil
+	return query, []interface{}{namedArgs.GetArgs()}, nil
 }
 
 // BuildUpdateQuery constrói uma query UPDATE específica para Oracle
@@ -370,7 +374,7 @@ func (p *OracleProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[
 		strings.Join(whereClauses, " AND "))
 
 	// Retorna o map como um slice para compatibilidade
-	return query, []interface{}{namedArgs.GetNamedArgs()}, nil
+	return query, []interface{}{namedArgs.GetArgs()}, nil
 }
 
 // BuildDeleteQuery constrói uma query DELETE específica para Oracle
@@ -422,7 +426,77 @@ func (p *OracleProvider) BuildDeleteQuery(entity odata.EntityMetadata, keyValues
 		strings.Join(whereClauses, " AND "))
 
 	// Retorna o map como um slice para compatibilidade
-	return query, []interface{}{namedArgs.GetNamedArgs()}, nil
+	return query, []interface{}{namedArgs.GetArgs()}, nil
+}
+
+// ConvertValue implementa conversão de valor para Oracle sem conversão manual
+func (p *OracleProvider) ConvertValue(value interface{}, targetType string) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	switch targetType {
+	case "int", "int32", "int64":
+		switch v := value.(type) {
+		case string:
+			return strconv.ParseInt(v, 10, 64)
+		case int:
+			return int64(v), nil
+		case int32:
+			return int64(v), nil
+		case int64:
+			return v, nil
+		case float64:
+			return int64(v), nil
+		case float32:
+			return int64(v), nil
+		default:
+			return value, nil // Deixa o driver Oracle lidar com isso
+		}
+	case "float64", "double":
+		switch v := value.(type) {
+		case string:
+			return strconv.ParseFloat(v, 64)
+		case float64:
+			return v, nil
+		case float32:
+			return float64(v), nil
+		case int:
+			return float64(v), nil
+		case int32:
+			return float64(v), nil
+		case int64:
+			return float64(v), nil
+		default:
+			return value, nil // Deixa o driver Oracle lidar com isso
+		}
+	case "string":
+		switch v := value.(type) {
+		case string:
+			return v, nil
+		case []byte:
+			return string(v), nil
+		default:
+			return fmt.Sprintf("%v", value), nil
+		}
+	case "bool", "boolean":
+		switch v := value.(type) {
+		case bool:
+			return v, nil
+		case string:
+			return strconv.ParseBool(v)
+		case int:
+			return v != 0, nil
+		case int32:
+			return v != 0, nil
+		case int64:
+			return v != 0, nil
+		default:
+			return value, nil
+		}
+	default:
+		return value, nil
+	}
 }
 
 // MapGoTypeToSQL mapeia tipos Go para tipos Oracle específicos

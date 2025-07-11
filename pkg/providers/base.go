@@ -20,11 +20,30 @@ type BaseProvider struct {
 	searchParser  *odata.SearchParser
 }
 
+// NewBaseProvider cria um novo BaseProvider
+func NewBaseProvider(connection *sql.DB, driverName string) *BaseProvider {
+	return &BaseProvider{
+		db:         connection,
+		driverName: driverName,
+	}
+}
+
 // InitQueryBuilder inicializa o query builder
 func (p *BaseProvider) InitQueryBuilder() {
 	if p.queryBuilder == nil {
 		p.queryBuilder = odata.NewQueryBuilder(p.driverName)
+		if p.queryBuilder == nil {
+			panic("Failed to initialize QueryBuilder")
+		}
 	}
+}
+
+// GetQueryBuilder retorna o query builder, inicializando se necessário
+func (p *BaseProvider) GetQueryBuilder() *odata.QueryBuilder {
+	if p.queryBuilder == nil {
+		p.InitQueryBuilder()
+	}
+	return p.queryBuilder
 }
 
 // InitParsers inicializa os parsers de compute e search
@@ -107,7 +126,8 @@ func (p *BaseProvider) BuildSelectQueryOptimized(ctx context.Context, metadata o
 	// LIMIT/OFFSET clause
 	topValue := odata.GetTopValue(options.Top)
 	skipValue := odata.GetSkipValue(options.Skip)
-	limitClause := p.queryBuilder.BuildLimitClause(topValue, skipValue)
+	qb := p.GetQueryBuilder()
+	limitClause := qb.BuildLimitClause(topValue, skipValue)
 	if limitClause != "" {
 		query.WriteString(" ")
 		query.WriteString(limitClause)
@@ -120,11 +140,12 @@ func (p *BaseProvider) BuildSelectQueryOptimized(ctx context.Context, metadata o
 func (p *BaseProvider) buildSelectWithCompute(ctx context.Context, metadata odata.EntityMetadata, options odata.QueryOptions) (string, []interface{}, error) {
 	// Campos regulares
 	selectFields := odata.GetSelectedProperties(options.Select)
-	baseSelect := p.queryBuilder.BuildSelectClause(metadata, selectFields)
+	qb := p.GetQueryBuilder()
+	baseSelect := qb.BuildSelectClause(metadata, selectFields)
 
 	// Campos computados
 	if options.Compute != nil {
-		computeSQL, computeArgs, err := p.queryBuilder.BuildComputeSQL(ctx, options.Compute, metadata)
+		computeSQL, computeArgs, err := qb.BuildComputeSQL(ctx, options.Compute, metadata)
 		if err != nil {
 			return "", nil, err
 		}
@@ -150,11 +171,13 @@ func (p *BaseProvider) buildWhereWithSearch(ctx context.Context, metadata odata.
 	var searchArgs []interface{}
 	var err error
 
+	qb := p.GetQueryBuilder()
+
 	// Processa filtro se presente
 	if options.Filter != nil && options.Filter.Tree != nil {
 		tree := options.Filter.Tree
 
-		filterSQL, filterArgs, err = p.queryBuilder.BuildWhereClause(ctx, tree, metadata)
+		filterSQL, filterArgs, err = qb.BuildWhereClause(ctx, tree, metadata)
 		if err != nil {
 			return "", nil, fmt.Errorf("failed to build filter clause: %w", err)
 		}
@@ -162,14 +185,14 @@ func (p *BaseProvider) buildWhereWithSearch(ctx context.Context, metadata odata.
 
 	// Processa busca se presente
 	if options.Search != nil {
-		searchSQL, searchArgs, err = p.queryBuilder.BuildSearchSQL(ctx, options.Search, metadata)
+		searchSQL, searchArgs, err = qb.BuildSearchSQL(ctx, options.Search, metadata)
 		if err != nil {
 			return "", nil, fmt.Errorf("failed to build search clause: %w", err)
 		}
 	}
 
 	// Combina filtro e busca
-	return p.queryBuilder.CombineSearchWithFilter(ctx, searchSQL, filterSQL, searchArgs, filterArgs)
+	return qb.CombineSearchWithFilter(ctx, searchSQL, filterSQL, searchArgs, filterArgs)
 }
 
 // BuildWhereClause constrói a cláusula WHERE baseada no filtro OData (método legado)
