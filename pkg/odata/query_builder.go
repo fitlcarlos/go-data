@@ -62,37 +62,26 @@ type QueryBuilder struct {
 
 // NewQueryBuilder cria um novo QueryBuilder para o dialeto especificado
 func NewQueryBuilder(dialect string) *QueryBuilder {
-	log.Printf("🔍 QueryBuilder - Creating new QueryBuilder for dialect: %s", dialect)
-
 	qb := &QueryBuilder{
 		dialect:    strings.ToLower(dialect),
 		nodeMap:    make(NodeMap),
 		prepareMap: make(PrepareMap),
 	}
 
-	log.Printf("🔍 QueryBuilder - QueryBuilder struct created, nodeMap initialized")
-
 	// Configura os mapas baseado no dialeto
 	switch qb.dialect {
 	case "mysql":
-		log.Printf("🔍 QueryBuilder - Setting up MySQL maps")
 		qb.setupMySQLMaps()
 	case "postgresql":
-		log.Printf("🔍 QueryBuilder - Setting up PostgreSQL maps")
 		qb.setupPostgreSQLMaps()
 	case "oracle":
-		log.Printf("🔍 QueryBuilder - Setting up Oracle maps")
 		qb.setupOracleMaps()
 	default:
-		log.Printf("🔍 QueryBuilder - Setting up default maps for dialect: %s", qb.dialect)
 		qb.setupDefaultMaps()
 	}
 
-	log.Printf("🔍 QueryBuilder - Maps setup complete, nodeMap has %d entries", len(qb.nodeMap))
-
 	// Verifica se o nodeMap foi inicializado corretamente
 	if qb.nodeMap == nil {
-		log.Printf("❌ QueryBuilder - CRITICAL: nodeMap is nil after setup!")
 		panic("NodeMap is nil after setup")
 	}
 
@@ -416,37 +405,28 @@ func (qb *QueryBuilder) buildBinaryOperatorExpression(ctx context.Context, node 
 
 // buildBinaryOperatorExpressionNamed constrói expressão para operador binário usando argumentos nomeados
 func (qb *QueryBuilder) buildBinaryOperatorExpressionNamed(ctx context.Context, node *ParseNode, metadata EntityMetadata, namedArgs *NamedArgs) (string, error) {
-	log.Printf("🔍 QueryBuilder - buildBinaryOperatorExpressionNamed called")
 
 	if len(node.Children) != 2 {
 		return "", fmt.Errorf("binary operator %s expects 2 children, got %d", node.Token.Value, len(node.Children))
 	}
 
 	operator := node.Token.Value
-	log.Printf("🔍 QueryBuilder - Processing operator: %s", operator)
 
 	// Verifica se o nodeMap está inicializado
 	if qb.nodeMap == nil {
-		log.Printf("❌ QueryBuilder - CRITICAL: nodeMap is nil when accessing operator %s", operator)
 		return "", fmt.Errorf("nodeMap is nil - QueryBuilder not properly initialized")
 	}
-
-	log.Printf("🔍 QueryBuilder - nodeMap has %d entries", len(qb.nodeMap))
 
 	// Lista as chaves disponíveis no nodeMap para debug
 	var availableKeys []string
 	for k := range qb.nodeMap {
 		availableKeys = append(availableKeys, k)
 	}
-	log.Printf("🔍 QueryBuilder - Available operators: %v", availableKeys)
 
 	template, exists := qb.nodeMap[operator]
 	if !exists {
-		log.Printf("❌ QueryBuilder - Operator %s not found in nodeMap", operator)
 		return "", fmt.Errorf("unsupported operator: %s (available: %v)", operator, availableKeys)
 	}
-
-	log.Printf("🔍 QueryBuilder - Found template for operator %s: %s", operator, template)
 
 	// Constrói expressões para os filhos
 	leftExpr, err := qb.buildNodeExpressionNamed(ctx, node.Children[0], metadata, namedArgs)
@@ -461,7 +441,6 @@ func (qb *QueryBuilder) buildBinaryOperatorExpressionNamed(ctx context.Context, 
 
 	// Aplica template
 	expression := fmt.Sprintf(template, leftExpr, rightExpr)
-	log.Printf("🔍 QueryBuilder - Generated expression: %s", expression)
 
 	return expression, nil
 }
@@ -1216,6 +1195,12 @@ func (qb *QueryBuilder) buildSearchExpression(ctx context.Context, expr *SearchE
 
 // buildSearchTerm constrói SQL para um termo de busca
 func (qb *QueryBuilder) buildSearchTerm(ctx context.Context, term string, searchableProps []PropertyMetadata) (string, []interface{}, error) {
+	select {
+	case <-ctx.Done():
+		return "", nil, ctx.Err()
+	default:
+	}
+
 	if term == "" {
 		return "", nil, fmt.Errorf("empty search term")
 	}

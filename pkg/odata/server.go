@@ -91,28 +91,115 @@ func DefaultServerConfig() *ServerConfig {
 
 // Server representa o servidor OData
 type Server struct {
-	entities     map[string]EntityService
-	router       *fiber.App
-	parser       *ODataParser
-	urlParser    *URLParser
-	provider     DatabaseProvider
-	config       *ServerConfig
-	httpServer   *fiber.App // Changed from http.Server to fiber.App
-	logger       *log.Logger
-	mu           sync.RWMutex
-	running      bool
-	jwtService   *JWTService
-	entityAuth   map[string]EntityAuthConfig // Configurações de autenticação por entidade
-	eventManager *EntityEventManager         // Gerenciador de eventos de entidade
+	entities          map[string]EntityService
+	router            *fiber.App
+	parser            *ODataParser
+	urlParser         *URLParser
+	provider          DatabaseProvider         // Provider padrão
+	multiTenantPool   *MultiTenantProviderPool // Pool multi-tenant
+	multiTenantConfig *MultiTenantConfig       // Configurações multi-tenant
+	config            *ServerConfig
+	httpServer        *fiber.App // Changed from http.Server to fiber.App
+	logger            *log.Logger
+	mu                sync.RWMutex
+	running           bool
+	jwtService        *JWTService
+	entityAuth        map[string]EntityAuthConfig // Configurações de autenticação por entidade
+	eventManager      *EntityEventManager         // Gerenciador de eventos de entidade
 }
 
 // NewServer cria uma nova instância do servidor OData
-func NewServer(provider DatabaseProvider, host string, port int, routePrefix string) *Server {
+// Carrega automaticamente configurações multi-tenant do .env
+// Se não conseguir, retorna um servidor básico para configuração manual
+func NewServer() *Server {
+	// Carrega configurações multi-tenant automaticamente
+	multiTenantConfig := LoadMultiTenantConfig()
+
+	// Se multi-tenant estiver habilitado, cria servidor multi-tenant
+	if multiTenantConfig.Enabled {
+		return NewMultiTenantServer(multiTenantConfig)
+	}
+
+	// Se não está em modo multi-tenant, usa o comportamento original
+	if multiTenantConfig.EnvConfig != nil {
+		provider := multiTenantConfig.EnvConfig.CreateProviderFromConfig()
+		if provider == nil {
+			return NewServerWithConfig(nil, multiTenantConfig.EnvConfig.ToServerConfig())
+		}
+		return NewServerWithConfig(provider, multiTenantConfig.EnvConfig.ToServerConfig())
+	}
+
+	return NewServerWithConfig(nil, DefaultServerConfig())
+}
+
+// NewServerWithProvider cria servidor com provider específico (mantido para compatibilidade)
+// Carrega automaticamente configurações multi-tenant do .env
+func NewServerWithProvider(provider DatabaseProvider, host string, port int, routePrefix string) *Server {
+	// Carrega configurações multi-tenant automaticamente
+	multiTenantConfig := LoadMultiTenantConfig()
+
+	// Se multi-tenant estiver habilitado, cria servidor multi-tenant e ignora o provider fornecido
+	if multiTenantConfig.Enabled {
+		server := NewMultiTenantServer(multiTenantConfig)
+		// Sobrescreve configurações básicas do servidor
+		server.config.Host = host
+		server.config.Port = port
+		server.config.RoutePrefix = routePrefix
+		return server
+	}
+
+	// Se não está em modo multi-tenant, usa o comportamento original
 	serviceConfig := DefaultServerConfig()
 	serviceConfig.Host = host
 	serviceConfig.Port = port
 	serviceConfig.RoutePrefix = routePrefix
 	return NewServerWithConfig(provider, serviceConfig)
+}
+
+// NewMultiTenantServer cria um servidor multi-tenant
+func NewMultiTenantServer(multiTenantConfig *MultiTenantConfig) *Server {
+	logger := log.New(os.Stdout, "[OData-MultiTenant] ", log.LstdFlags|log.Lshortfile)
+
+	server := &Server{
+		entities:          make(map[string]EntityService),
+		router:            fiber.New(),
+		parser:            NewODataParser(),
+		urlParser:         NewURLParser(),
+		multiTenantConfig: multiTenantConfig,
+		config:            multiTenantConfig.EnvConfig.ToServerConfig(),
+		logger:            logger,
+		entityAuth:        make(map[string]EntityAuthConfig),
+		eventManager:      NewEntityEventManager(logger),
+	}
+
+	// Inicializa pool multi-tenant
+	server.multiTenantPool = NewMultiTenantProviderPool(multiTenantConfig, logger)
+	if err := server.multiTenantPool.InitializeProviders(); err != nil {
+		logger.Printf("❌ Erro ao inicializar pool multi-tenant: %v", err)
+	}
+
+	// Configura middlewares específicos para multi-tenant
+	server.setupMultiTenantMiddlewares()
+	server.setupBaseRoutes()
+
+	// Imprime informações sobre configuração multi-tenant
+	multiTenantConfig.PrintMultiTenantConfig()
+
+	return server
+}
+
+// NewServerWithEnv cria uma nova instância do servidor OData carregando configurações do .env
+func NewServerWithEnv(provider DatabaseProvider) *Server {
+	config, err := LoadEnvOrDefault()
+	if err != nil {
+		log.Printf("Aviso: Não foi possível carregar configurações do .env: %v", err)
+		return NewServerWithConfig(provider, DefaultServerConfig())
+	}
+
+	// Imprime configurações carregadas
+	config.PrintLoadedConfig()
+
+	return NewServerWithConfig(provider, config.ToServerConfig())
 }
 
 // NewServerWithConfig cria uma nova instância do servidor OData com configurações personalizadas
@@ -162,6 +249,35 @@ func NewServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 	return server
 }
 
+// setupMultiTenantMiddlewares configura middlewares específicos para multi-tenant
+func (s *Server) setupMultiTenantMiddlewares() {
+	// Middleware de identificação de tenant (deve ser o primeiro)
+	s.router.Use(s.TenantMiddleware())
+
+	// Middleware de informações do tenant
+	s.router.Use(s.TenantInfo())
+
+	// Demais middlewares...
+	if s.config.EnableCORS {
+		s.router.Use(cors.New(cors.Config{
+			AllowOrigins:     s.config.AllowedOrigins,
+			AllowMethods:     s.config.AllowedMethods,
+			AllowHeaders:     s.config.AllowedHeaders,
+			ExposeHeaders:    s.config.ExposedHeaders,
+			AllowCredentials: s.config.AllowCredentials,
+		}))
+	}
+
+	if s.config.EnableLogging {
+		s.router.Use(fiberlogger.New(fiberlogger.Config{
+			Format: "${time} ${method} ${path} ${status} ${latency} [${locals:tenant_id}]\n",
+			Output: os.Stdout,
+		}))
+	}
+
+	s.router.Use(recover.New())
+}
+
 // setupBaseRoutes configura as rotas básicas do servidor
 func (s *Server) setupBaseRoutes() {
 	prefix := s.config.RoutePrefix
@@ -177,6 +293,18 @@ func (s *Server) setupBaseRoutes() {
 
 	// Rota para server info
 	s.router.Get("/info", s.handleServerInfo)
+
+	// Rotas específicas para multi-tenant
+	if s.multiTenantConfig != nil && s.multiTenantConfig.Enabled {
+		// Rota para informações dos tenants
+		s.router.Get("/tenants", s.handleTenantList)
+
+		// Rota para estatísticas dos tenants
+		s.router.Get("/tenants/stats", s.handleTenantStats)
+
+		// Rota para health check específico de tenant
+		s.router.Get("/tenants/:tenantId/health", s.handleTenantHealth)
+	}
 }
 
 // RegisterEntity registra uma entidade no servidor usando mapeamento automático
@@ -189,7 +317,17 @@ func (s *Server) RegisterEntity(name string, entity interface{}) error {
 		return fmt.Errorf("erro ao registrar entidade %s: %w", name, err)
 	}
 
-	service := NewBaseEntityService(s.provider, metadata, s)
+	var service EntityService
+
+	// Se multi-tenant estiver habilitado, usa MultiTenantEntityService
+	if s.multiTenantConfig != nil && s.multiTenantConfig.Enabled {
+		service = NewMultiTenantEntityService(metadata, s)
+		s.logger.Printf("Entidade '%s' registrada com suporte multi-tenant", name)
+	} else {
+		service = NewBaseEntityService(s.provider, metadata, s)
+		s.logger.Printf("Entidade '%s' registrada com provider único", name)
+	}
+
 	s.entities[name] = service
 	s.setupEntityRoutes(name)
 
@@ -686,6 +824,9 @@ func (s *Server) handleEntityById(c fiber.Ctx) error {
 
 // handleGetCollection lida com GET na coleção de entidades
 func (s *Server) handleGetCollection(c fiber.Ctx, service EntityService) error {
+	// Cria contexto com referência ao Fiber Context para multi-tenant
+	ctx := context.WithValue(c.Context(), FiberContextKey, c)
+
 	// Extrai o nome da entidade
 	entityName := s.extractEntityName(c.Path())
 
@@ -697,7 +838,7 @@ func (s *Server) handleGetCollection(c fiber.Ctx, service EntityService) error {
 	}
 
 	// Executa consulta centralizada com eventos
-	response, err := s.handleEntityQueryWithEvents(c, service, options, entityName, true)
+	response, err := s.handleEntityQueryWithEvents(ctx, service, options, entityName, true)
 	if err != nil {
 		s.writeError(c, fiber.StatusInternalServerError, "QueryError", err.Error())
 		return nil
@@ -718,6 +859,9 @@ func (s *Server) handleGetEntity(c fiber.Ctx, service EntityService, keys map[st
 		s.logger.Printf("🔍 handleGetEntity - Key '%s': value=%v, type=%T", k, v, v)
 	}
 
+	// Cria contexto com referência ao Fiber Context para multi-tenant
+	ctx := context.WithValue(c.Context(), FiberContextKey, c)
+
 	// Extrai o nome da entidade
 	entityName := s.extractEntityName(c.Path())
 
@@ -731,12 +875,17 @@ func (s *Server) handleGetEntity(c fiber.Ctx, service EntityService, keys map[st
 	// Constrói filtro para as chaves específicas usando o método centralizado do BaseEntityService
 	baseService, ok := service.(*BaseEntityService)
 	if !ok {
-		s.writeError(c, fiber.StatusInternalServerError, "ServiceError", "Service type not supported")
-		return nil
+		// Tenta com MultiTenantEntityService
+		if mtService, ok := service.(*MultiTenantEntityService); ok {
+			baseService = mtService.BaseEntityService
+		} else {
+			s.writeError(c, fiber.StatusInternalServerError, "ServiceError", "Service type not supported")
+			return nil
+		}
 	}
 
 	// Constrói filtro tipado para as chaves
-	keyFilter, err := baseService.BuildTypedKeyFilter(c.Context(), keys)
+	keyFilter, err := baseService.BuildTypedKeyFilter(ctx, keys)
 	if err != nil {
 		s.logger.Printf("❌ handleGetEntity - Failed to build key filter: %v", err)
 		s.writeError(c, fiber.StatusBadRequest, "InvalidKey", err.Error())
@@ -757,7 +906,7 @@ func (s *Server) handleGetEntity(c fiber.Ctx, service EntityService, keys map[st
 	options.Filter = keyFilter
 
 	// Executa consulta centralizada com eventos
-	response, err := s.handleEntityQueryWithEvents(c, service, options, entityName, false)
+	response, err := s.handleEntityQueryWithEvents(ctx, service, options, entityName, false)
 	if err != nil {
 		s.writeError(c, fiber.StatusInternalServerError, "QueryError", err.Error())
 		return nil
@@ -938,9 +1087,7 @@ func (s *Server) extractEntityName(path string) string {
 	}
 
 	// Remove $count se presente
-	if strings.HasSuffix(path, "/$count") {
-		path = strings.TrimSuffix(path, "/$count")
-	}
+	path = strings.TrimSuffix(path, "/$count")
 
 	return path
 }
@@ -1315,49 +1462,57 @@ func (s *Server) executeEntityQuery(ctx context.Context, service EntityService, 
 }
 
 // handleEntityQueryWithEvents executa consulta e dispara eventos apropriados
-func (s *Server) handleEntityQueryWithEvents(c fiber.Ctx, service EntityService, options QueryOptions, entityName string, isCollection bool) (*ODataResponse, error) {
+func (s *Server) handleEntityQueryWithEvents(ctx context.Context, service EntityService, options QueryOptions, entityName string, isCollection bool) (*ODataResponse, error) {
 	// Executa a consulta
-	response, err := s.executeEntityQuery(c.Context(), service, options, entityName)
+	response, err := s.executeEntityQuery(ctx, service, options, entityName)
 	if err != nil {
 		return nil, err
 	}
 
 	// Dispara eventos apropriados
 	if response != nil && response.Value != nil {
-		eventCtx := createEventContext(c, entityName)
+		// Extrai Fiber Context do contexto para eventos
+		var fiberCtx fiber.Ctx
+		if fc, ok := ctx.Value(FiberContextKey).(fiber.Ctx); ok {
+			fiberCtx = fc
+		}
 
-		if isCollection {
-			// Para collections, dispara evento OnEntityList
-			if results, ok := response.Value.([]interface{}); ok {
-				args := NewEntityListArgs(eventCtx, options, results)
+		if fiberCtx != nil {
+			eventCtx := createEventContext(fiberCtx, entityName)
 
-				// Definir TotalCount corretamente
-				if response.Count != nil {
-					args.TotalCount = *response.Count
-				} else {
-					args.TotalCount = int64(len(results))
+			if isCollection {
+				// Para collections, dispara evento OnEntityList
+				if results, ok := response.Value.([]interface{}); ok {
+					args := NewEntityListArgs(eventCtx, options, results)
+
+					// Definir TotalCount corretamente
+					if response.Count != nil {
+						args.TotalCount = *response.Count
+					} else {
+						args.TotalCount = int64(len(results))
+					}
+
+					// Definir se filtro foi aplicado
+					args.FilterApplied = options.Filter != nil
+
+					if err := s.eventManager.Emit(args); err != nil {
+						s.logger.Printf("❌ Erro no evento OnEntityList: %v", err)
+					}
 				}
+			} else {
+				// Para entidades específicas, dispara evento OnEntityGet
+				if results, ok := response.Value.([]interface{}); ok && len(results) > 0 {
+					// Extrai chaves da URL para o evento
+					keys := make(map[string]interface{})
+					if options.Filter != nil {
+						// Tenta extrair chaves do filtro (implementação básica)
+						keys["extracted_from_filter"] = options.Filter.RawValue
+					}
 
-				// Definir se filtro foi aplicado
-				args.FilterApplied = options.Filter != nil
-
-				if err := s.eventManager.Emit(args); err != nil {
-					s.logger.Printf("❌ Erro no evento OnEntityList: %v", err)
-				}
-			}
-		} else {
-			// Para entidades específicas, dispara evento OnEntityGet
-			if results, ok := response.Value.([]interface{}); ok && len(results) > 0 {
-				// Extrai chaves da URL para o evento
-				keys := make(map[string]interface{})
-				if options.Filter != nil {
-					// Tenta extrair chaves do filtro (implementação básica)
-					keys["extracted_from_filter"] = options.Filter.RawValue
-				}
-
-				args := NewEntityGetArgs(eventCtx, keys, results[0])
-				if err := s.eventManager.Emit(args); err != nil {
-					s.logger.Printf("❌ Erro no evento OnEntityGet: %v", err)
+					args := NewEntityGetArgs(eventCtx, keys, results[0])
+					if err := s.eventManager.Emit(args); err != nil {
+						s.logger.Printf("❌ Erro no evento OnEntityGet: %v", err)
+					}
 				}
 			}
 		}
@@ -1522,4 +1677,98 @@ func (s *Server) debugQueryParsing(c fiber.Ctx) {
 			log.Printf("     %s: standard=%v, custom=%v", key, standardVal, vals)
 		}
 	}
+}
+
+// getCurrentProvider retorna o provider para o tenant atual
+func (s *Server) getCurrentProvider(c fiber.Ctx) DatabaseProvider {
+	if s.multiTenantPool == nil {
+		return s.provider
+	}
+
+	tenantID := GetCurrentTenant(c)
+	return s.multiTenantPool.GetProvider(tenantID)
+}
+
+// handleTenantList lista todos os tenants disponíveis
+func (s *Server) handleTenantList(c fiber.Ctx) error {
+	if s.multiTenantPool == nil {
+		return c.JSON(map[string]interface{}{
+			"multi_tenant": false,
+			"tenants":      []string{"default"},
+		})
+	}
+
+	tenants := s.multiTenantPool.GetTenantList()
+	return c.JSON(map[string]interface{}{
+		"multi_tenant": true,
+		"tenants":      tenants,
+		"total_count":  len(tenants),
+	})
+}
+
+// handleTenantStats retorna estatísticas de todos os tenants
+func (s *Server) handleTenantStats(c fiber.Ctx) error {
+	if s.multiTenantPool == nil {
+		return c.JSON(map[string]interface{}{
+			"multi_tenant": false,
+			"message":      "Multi-tenant não habilitado",
+		})
+	}
+
+	stats := s.multiTenantPool.GetAllStats()
+	return c.JSON(stats)
+}
+
+// handleTenantHealth retorna informações de saúde de um tenant específico
+func (s *Server) handleTenantHealth(c fiber.Ctx) error {
+	tenantID := c.Params("tenantId")
+
+	if s.multiTenantPool == nil {
+		return c.JSON(map[string]interface{}{
+			"tenant_id":    tenantID,
+			"multi_tenant": false,
+			"status":       "not_applicable",
+		})
+	}
+
+	if !s.multiTenantConfig.TenantExists(tenantID) {
+		return c.Status(fiber.StatusNotFound).JSON(map[string]interface{}{
+			"tenant_id": tenantID,
+			"status":    "not_found",
+			"message":   "Tenant não encontrado",
+		})
+	}
+
+	provider := s.multiTenantPool.GetProvider(tenantID)
+	if provider == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(map[string]interface{}{
+			"tenant_id": tenantID,
+			"status":    "no_provider",
+			"message":   "Provider não disponível",
+		})
+	}
+
+	health := map[string]interface{}{
+		"tenant_id": tenantID,
+		"status":    "healthy",
+	}
+
+	// Testa a conexão
+	if db := provider.GetConnection(); db != nil {
+		if err := db.Ping(); err != nil {
+			health["status"] = "unhealthy"
+			health["error"] = err.Error()
+			return c.Status(fiber.StatusServiceUnavailable).JSON(health)
+		}
+
+		// Adiciona estatísticas da conexão
+		stats := db.Stats()
+		health["connection_stats"] = map[string]interface{}{
+			"open_connections": stats.OpenConnections,
+			"in_use":           stats.InUse,
+			"idle":             stats.Idle,
+		}
+	}
+
+	return c.JSON(health)
 }

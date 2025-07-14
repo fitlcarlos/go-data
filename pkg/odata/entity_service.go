@@ -54,12 +54,12 @@ func (s *BaseEntityService) Query(ctx context.Context, options QueryOptions) (*O
 
 	// Constrói a query SQL seguindo a ordem correta
 	var query string
-	var args []interface{}
+	var args []any
 	var err error
 
 	// Aplica $filter, $orderby, $skip/$top primeiro na query SQL
 	if optimizedProvider, ok := s.provider.(interface {
-		BuildSelectQueryOptimized(ctx context.Context, metadata EntityMetadata, options QueryOptions) (string, []interface{}, error)
+		BuildSelectQueryOptimized(ctx context.Context, metadata EntityMetadata, options QueryOptions) (string, []any, error)
 	}); ok {
 		query, args, err = optimizedProvider.BuildSelectQueryOptimized(ctx, s.metadata, options)
 	} else {
@@ -195,7 +195,7 @@ func (s *BaseEntityService) Query(ctx context.Context, options QueryOptions) (*O
 }
 
 // Get recupera uma entidade específica pelas chaves
-func (s *BaseEntityService) Get(ctx context.Context, keys map[string]interface{}) (interface{}, error) {
+func (s *BaseEntityService) Get(ctx context.Context, keys map[string]any) (any, error) {
 	log.Printf("🔍 BaseEntityService.Get - Starting with keys: %+v", keys)
 
 	// Log dos tipos das chaves para debug
@@ -257,7 +257,7 @@ func (s *BaseEntityService) Get(ctx context.Context, keys map[string]interface{}
 }
 
 // buildTypedPropertyFilter constrói um filtro para uma propriedade preservando o tipo do valor
-func (s *BaseEntityService) buildTypedPropertyFilter(ctx context.Context, propertyName string, propertyValue interface{}) (*GoDataFilterQuery, error) {
+func (s *BaseEntityService) buildTypedPropertyFilter(ctx context.Context, propertyName string, propertyValue any) (*GoDataFilterQuery, error) {
 	log.Printf("🔍 buildTypedPropertyFilter - Starting with property: %s, value: %v, type: %T", propertyName, propertyValue, propertyValue)
 
 	// Cria os nós da árvore de parse preservando os tipos
@@ -297,7 +297,7 @@ func (s *BaseEntityService) buildTypedPropertyFilter(ctx context.Context, proper
 }
 
 // BuildTypedKeyFilter constrói um filtro preservando os tipos das chaves
-func (s *BaseEntityService) BuildTypedKeyFilter(ctx context.Context, keys map[string]interface{}) (*GoDataFilterQuery, error) {
+func (s *BaseEntityService) BuildTypedKeyFilter(ctx context.Context, keys map[string]any) (*GoDataFilterQuery, error) {
 	log.Printf("🔍 buildTypedKeyFilter - Starting with keys: %+v", keys)
 
 	if len(keys) == 0 {
@@ -413,7 +413,7 @@ func (s *BaseEntityService) BuildTypedKeyFilter(ctx context.Context, keys map[st
 }
 
 // getTokenTypeForValue retorna o tipo de token apropriado baseado no tipo do valor
-func (s *BaseEntityService) getTokenTypeForValue(value interface{}) int {
+func (s *BaseEntityService) getTokenTypeForValue(value any) int {
 	switch value.(type) {
 	case string:
 		return int(FilterTokenString)
@@ -430,7 +430,7 @@ func (s *BaseEntityService) getTokenTypeForValue(value interface{}) int {
 }
 
 // Create cria uma nova entidade
-func (s *BaseEntityService) Create(ctx context.Context, entity interface{}) (interface{}, error) {
+func (s *BaseEntityService) Create(ctx context.Context, entity any) (any, error) {
 	// Converte a entidade para map
 	data, err := s.entityToMap(entity)
 	if err != nil {
@@ -468,7 +468,7 @@ func (s *BaseEntityService) Create(ctx context.Context, entity interface{}) (int
 
 		// Busca o registro inserido
 		keyProp := s.getAutoIncrementKey()
-		keys := map[string]interface{}{
+		keys := map[string]any{
 			keyProp.Name: lastID,
 		}
 
@@ -479,7 +479,7 @@ func (s *BaseEntityService) Create(ctx context.Context, entity interface{}) (int
 }
 
 // Update atualiza uma entidade existente
-func (s *BaseEntityService) Update(ctx context.Context, keys map[string]interface{}, entity interface{}) (interface{}, error) {
+func (s *BaseEntityService) Update(ctx context.Context, keys map[string]any, entity any) (any, error) {
 	// Converte a entidade para map
 	data, err := s.entityToMap(entity)
 	if err != nil {
@@ -518,7 +518,7 @@ func (s *BaseEntityService) Update(ctx context.Context, keys map[string]interfac
 }
 
 // Delete remove uma entidade
-func (s *BaseEntityService) Delete(ctx context.Context, keys map[string]interface{}) error {
+func (s *BaseEntityService) Delete(ctx context.Context, keys map[string]any) error {
 	// Constrói a query SQL
 	query, args, err := s.provider.BuildDeleteQuery(s.metadata, keys)
 	if err != nil {
@@ -545,18 +545,18 @@ func (s *BaseEntityService) Delete(ctx context.Context, keys map[string]interfac
 }
 
 // scanRows converte os resultados SQL para maps
-func (s *BaseEntityService) scanRows(rows *sql.Rows, expandOptions []ExpandOption) ([]interface{}, error) {
+func (s *BaseEntityService) scanRows(rows *sql.Rows, expandOptions []ExpandOption) ([]any, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, err
 	}
 
-	var results []interface{}
+	var results []any
 
 	for rows.Next() {
 		// Cria um slice de interfaces para os valores
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
+		values := make([]any, len(columns))
+		valuePtrs := make([]any, len(columns))
 
 		for i := range values {
 			valuePtrs[i] = &values[i]
@@ -696,7 +696,7 @@ func (s *BaseEntityService) GetCount(ctx context.Context, options QueryOptions) 
 
 	// Usa o provider para construir a cláusula WHERE corretamente
 	var whereClause string
-	var args []interface{}
+	var args []any
 	var err error
 
 	if options.Filter != nil && options.Filter.Tree != nil {
@@ -724,7 +724,7 @@ func (s *BaseEntityService) GetCount(ctx context.Context, options QueryOptions) 
 }
 
 // buildKeyFilter constrói um filtro baseado nas chaves
-func (s *BaseEntityService) buildKeyFilter(keys map[string]interface{}) string {
+func (s *BaseEntityService) buildKeyFilter(keys map[string]any) string {
 	log.Printf("🔍 buildKeyFilter - Starting with keys: %+v", keys)
 
 	var filters []string
@@ -753,11 +753,11 @@ func (s *BaseEntityService) buildKeyFilter(keys map[string]interface{}) string {
 }
 
 // entityToMap converte uma entidade para map
-func (s *BaseEntityService) entityToMap(entity interface{}) (map[string]interface{}, error) {
-	result := make(map[string]interface{})
+func (s *BaseEntityService) entityToMap(entity any) (map[string]any, error) {
+	result := make(map[string]any)
 
 	// Se já é um map, retorna diretamente
-	if m, ok := entity.(map[string]interface{}); ok {
+	if m, ok := entity.(map[string]any); ok {
 		return m, nil
 	}
 
@@ -823,393 +823,8 @@ func (s *BaseEntityService) getAutoIncrementKey() *PropertyMetadata {
 	return nil
 }
 
-// processExpandedNavigation processa as navegações expandidas
-func (s *BaseEntityService) processExpandedNavigation(ctx context.Context, results []interface{}, expandOptions []ExpandOption) ([]interface{}, error) {
-	if len(results) == 0 {
-		return results, nil
-	}
-
-	// Para cada resultado, processa as navegações
-	for i, result := range results {
-		orderedEntity, ok := result.(*OrderedEntity)
-		if !ok {
-			continue
-		}
-
-		// Processa cada opção de expansão
-		for _, expandOption := range expandOptions {
-			expandedResult, err := s.expandNavigationProperty(ctx, orderedEntity, expandOption)
-			if err != nil {
-				// Log detalhado do erro para debug
-				errorMsg := fmt.Sprintf("%v", err)
-
-				// Log do erro mas tenta continuar processando outras propriedades
-				log.Printf("Warning: Failed to expand navigation property %s: %v. Property will remain as navigation link.", expandOption.Property, err)
-
-				// Se o erro for crítico de estrutura (não de conexão), falha
-				if strings.Contains(errorMsg, "navigation property") && strings.Contains(errorMsg, "not found") {
-					// Erro de estrutura - propriedade não existe, isso é crítico
-					return nil, fmt.Errorf("critical error expanding navigation property %s: %w", expandOption.Property, err)
-				}
-
-				// Para outros erros (incluindo conexão), continua com navigation link
-				continue
-			}
-
-			results[i] = expandedResult
-		}
-	}
-
-	return results, nil
-}
-
-// expandNavigationProperty expande uma propriedade de navegação específica
-func (s *BaseEntityService) expandNavigationProperty(ctx context.Context, entity *OrderedEntity, expandOption ExpandOption) (*OrderedEntity, error) {
-	// Encontra a propriedade de navegação nos metadados (comparação case-insensitive)
-	var navProperty *PropertyMetadata
-	for _, prop := range s.metadata.Properties {
-		if strings.EqualFold(prop.Name, expandOption.Property) && prop.IsNavigation {
-			navProperty = &prop
-			break
-		}
-	}
-
-	if navProperty == nil {
-		// Debug: adiciona informações sobre as propriedades disponíveis
-		var availableProps []string
-		for _, prop := range s.metadata.Properties {
-			if prop.IsNavigation {
-				availableProps = append(availableProps, prop.Name)
-			}
-		}
-		return entity, fmt.Errorf("navigation property %s not found. Available navigation properties: %v", expandOption.Property, availableProps)
-	}
-
-	// Obtém o valor da chave para fazer a busca relacionada
-	if navProperty.Relationship == nil {
-		return entity, fmt.Errorf("navigation property %s has no relationship metadata", expandOption.Property)
-	}
-
-	localKeyValue, exists := entity.Get(navProperty.Relationship.LocalProperty)
-	if !exists {
-		// Tenta procurar por variações do nome
-		for _, prop := range entity.Properties {
-			if strings.EqualFold(prop.Name, navProperty.Relationship.LocalProperty) {
-				localKeyValue = prop.Value
-				exists = true
-				break
-			}
-		}
-
-		if !exists {
-			// Debug: mostra quais propriedades estão disponíveis na entidade
-			var availableEntityProps []string
-			for _, prop := range entity.Properties {
-				availableEntityProps = append(availableEntityProps, prop.Name)
-			}
-			return entity, fmt.Errorf("local key property %s not found in entity. Available entity properties: %v", navProperty.Relationship.LocalProperty, availableEntityProps)
-		}
-	}
-
-	// Busca entidades relacionadas
-	relatedEntities, err := s.findRelatedEntities(ctx, navProperty, localKeyValue, expandOption)
-	if err != nil {
-		return entity, fmt.Errorf("failed to find related entities for property %s: %w", expandOption.Property, err)
-	}
-
-	// Adiciona as entidades relacionadas ao resultado
-	if navProperty.IsCollection {
-		// Para collections, usa a lista retornada (pode ser vazia se nenhuma entidade passar no filtro)
-		if relatedEntities == nil {
-			entity.Set(navProperty.Name, []interface{}{})
-		} else {
-			entity.Set(navProperty.Name, relatedEntities)
-		}
-	} else {
-		// Para propriedades únicas, verifica se há resultado
-		if relatedEntities == nil {
-			// findRelatedEntities retornou nil - entidade não passa no filtro do expand
-			entity.Set(navProperty.Name, nil)
-		} else if len(relatedEntities) > 0 {
-			// Entidade encontrada e passa no filtro
-			entity.Set(navProperty.Name, relatedEntities[0])
-		} else {
-			// Nenhuma entidade encontrada
-			entity.Set(navProperty.Name, nil)
-		}
-	}
-
-	return entity, nil
-}
-
-// findRelatedEntities encontra entidades relacionadas baseado na propriedade de navegação
-func (s *BaseEntityService) findRelatedEntities(ctx context.Context, navProperty *PropertyMetadata, keyValue interface{}, expandOption ExpandOption) ([]interface{}, error) {
-	if navProperty.Relationship == nil {
-		return nil, fmt.Errorf("navigation property has no relationship metadata")
-	}
-
-	// Primeiro, obtém os metadados da entidade relacionada para determinar o nome correto das propriedades
-	relatedMetadata, err := s.getRelatedEntityMetadata(navProperty.RelatedType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get related entity metadata: %w", err)
-	}
-
-	// Constrói filtro para buscar entidades relacionadas
-	// A lógica é diferente para association vs manyAssociation:
-	//
-	// - association (N:1): A chave estrangeira está na entidade atual
-	//   Ex: FabTarefa -> FabOperacao
-	//   Filtro: <chave_primaria_FabOperacao> eq <valor_de_ID_OPERACAO>
-	//
-	// - manyAssociation (1:N): A chave estrangeira está na entidade relacionada
-	//   Ex: FabOperacao -> FabTarefa
-	//   Filtro: <chave_estrangeira_FabTarefa> eq <valor_de_ID>
-	var filterProperty string
-	var filterValue interface{}
-
-	if navProperty.IsCollection {
-		// manyAssociation: filtro pela chave estrangeira na entidade relacionada
-		// Usa o nome da propriedade conforme definido no relacionamento
-		filterProperty = navProperty.Relationship.ReferencedProperty
-		filterValue = keyValue
-	} else {
-		// association: filtro pela chave primária na entidade relacionada
-		// Busca a chave primária real na entidade relacionada
-		var primaryKeyProperty string
-		for _, prop := range relatedMetadata.Properties {
-			if prop.IsKey {
-				primaryKeyProperty = prop.Name
-				break
-			}
-		}
-		if primaryKeyProperty == "" {
-			return nil, fmt.Errorf("no primary key found in related entity %s", navProperty.RelatedType)
-		}
-		filterProperty = primaryKeyProperty
-		filterValue = keyValue
-	}
-
-	// Converte o valor para o tipo correto baseado nos metadados da propriedade
-	convertedValue, err := s.convertValueToPropertyType(filterValue, filterProperty, relatedMetadata)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert filter value: %w", err)
-	}
-
-	// CORREÇÃO: Cria um filtro tipado preservando os tipos das propriedades
-	// similar ao buildTypedKeyFilter usado no método Get
-	filterQuery, err := s.buildTypedPropertyFilter(ctx, filterProperty, convertedValue)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build typed property filter: %w", err)
-	}
-
-	// Converte expandOption.Count para GoDataCountQuery
-	var countQuery *GoDataCountQuery
-	if expandOption.Count {
-		countQuery = SetCountValue(true)
-	}
-
-	// Converte expandOption.Select para GoDataSelectQuery
-	var selectQuery *GoDataSelectQuery
-	if len(expandOption.Select) > 0 {
-		selectStr := strings.Join(expandOption.Select, ",")
-		var err error
-		selectQuery, err = ParseSelectString(ctx, selectStr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse select: %w", err)
-		}
-	}
-
-	// Converte expandOption.Expand para GoDataExpandQuery
-	var expandQuery *GoDataExpandQuery
-	if len(expandOption.Expand) > 0 {
-		// Constrói string de expand recursiva a partir das opções
-		var expandParts []string
-		for _, exp := range expandOption.Expand {
-			expandPart := exp.Property
-
-			// Adiciona filtros e outros parâmetros se presentes
-			var subOptions []string
-			if exp.Filter != "" {
-				subOptions = append(subOptions, fmt.Sprintf("$filter=%s", exp.Filter))
-			}
-			if exp.OrderBy != "" {
-				subOptions = append(subOptions, fmt.Sprintf("$orderby=%s", exp.OrderBy))
-			}
-			if len(exp.Select) > 0 {
-				subOptions = append(subOptions, fmt.Sprintf("$select=%s", strings.Join(exp.Select, ",")))
-			}
-			if exp.Skip > 0 {
-				subOptions = append(subOptions, fmt.Sprintf("$skip=%d", exp.Skip))
-			}
-			if exp.Top > 0 {
-				subOptions = append(subOptions, fmt.Sprintf("$top=%d", exp.Top))
-			}
-
-			// Adiciona expand recursivo se presente - RECURSIVO COMPLETO
-			if len(exp.Expand) > 0 {
-				var nestedExpands []string
-				for _, nestedExp := range exp.Expand {
-					nestedExpandPart := nestedExp.Property
-
-					// Adiciona filtros e outros parâmetros nos expand aninhados se presentes
-					var nestedSubOptions []string
-					if nestedExp.Filter != "" {
-						nestedSubOptions = append(nestedSubOptions, fmt.Sprintf("$filter=%s", nestedExp.Filter))
-					}
-					if nestedExp.OrderBy != "" {
-						nestedSubOptions = append(nestedSubOptions, fmt.Sprintf("$orderby=%s", nestedExp.OrderBy))
-					}
-					if len(nestedExp.Select) > 0 {
-						nestedSubOptions = append(nestedSubOptions, fmt.Sprintf("$select=%s", strings.Join(nestedExp.Select, ",")))
-					}
-					if nestedExp.Skip > 0 {
-						nestedSubOptions = append(nestedSubOptions, fmt.Sprintf("$skip=%d", nestedExp.Skip))
-					}
-					if nestedExp.Top > 0 {
-						nestedSubOptions = append(nestedSubOptions, fmt.Sprintf("$top=%d", nestedExp.Top))
-					}
-
-					// Combina propriedade com suas opções aninhadas
-					if len(nestedSubOptions) > 0 {
-						nestedExpandPart = fmt.Sprintf("%s(%s)", nestedExpandPart, strings.Join(nestedSubOptions, ";"))
-					}
-
-					nestedExpands = append(nestedExpands, nestedExpandPart)
-				}
-				subOptions = append(subOptions, fmt.Sprintf("$expand=%s", strings.Join(nestedExpands, ",")))
-			}
-
-			// Combina propriedade com suas opções
-			if len(subOptions) > 0 {
-				expandPart = fmt.Sprintf("%s(%s)", expandPart, strings.Join(subOptions, ";"))
-			}
-
-			expandParts = append(expandParts, expandPart)
-		}
-		expandStr := strings.Join(expandParts, ",")
-		var err error
-		expandQuery, err = ParseExpandString(ctx, expandStr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse expand: %w", err)
-		}
-	}
-
-	// Converte expandOption.Skip para GoDataSkipQuery
-	var skipQuery *GoDataSkipQuery
-	if expandOption.Skip > 0 {
-		skip := GoDataSkipQuery(expandOption.Skip)
-		skipQuery = &skip
-	}
-
-	// Converte expandOption.Top para GoDataTopQuery
-	var topQuery *GoDataTopQuery
-	if expandOption.Top > 0 {
-		top := GoDataTopQuery(expandOption.Top)
-		topQuery = &top
-	}
-
-	// Primeiro, busca as entidades relacionadas SEM o filtro do expand
-	// O filtro do expand será aplicado posteriormente para determinar quais expandir
-	options := QueryOptions{
-		Filter:  filterQuery, // Apenas o filtro de relacionamento
-		OrderBy: expandOption.OrderBy,
-		Select:  selectQuery,
-		Expand:  expandQuery,
-		Skip:    skipQuery,
-		Top:     topQuery,
-		Count:   countQuery,
-	}
-
-	// Constrói query SQL para buscar entidades relacionadas com proteção de timeout
-	query, args, err := s.buildQueryWithTimeoutProtection(ctx, relatedMetadata, options)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build select query for related entities: %w", err)
-	}
-
-	// Verifica se o contexto já foi cancelado antes de executar
-	select {
-	case <-ctx.Done():
-		return nil, fmt.Errorf("context cancelled before query execution: %w", ctx.Err())
-	default:
-	}
-
-	rows, err := s.executeQuery(ctx, query, args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute query for related entities: %w", err)
-	}
-	defer rows.Close()
-
-	// Converte os resultados usando os metadados da entidade relacionada
-	relatedService := NewBaseEntityService(s.provider, relatedMetadata, s.server)
-	allResults, err := relatedService.scanRows(rows, expandOption.Expand)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan related entity rows: %w", err)
-	}
-
-	// Se não há filtro do expand, processa todas as entidades normalmente
-	if expandOption.Filter == "" {
-		// Processa expansões recursivas se houver
-		if len(expandOption.Expand) > 0 {
-			allResults, err = relatedService.processExpandedNavigation(ctx, allResults, expandOption.Expand)
-			if err != nil {
-				return nil, fmt.Errorf("failed to process recursive expanded navigation: %w", err)
-			}
-		}
-		return allResults, nil
-	}
-
-	// Parse o filtro do expand
-	expandFilterQuery, err := s.parseFilterWithTimeout(ctx, expandOption.Filter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse expand filter: %w", err)
-	}
-
-	// Aplica o filtro do expand de forma diferente dependendo se é collection ou não
-	if navProperty.IsCollection {
-		// Para collections (1:N), filtra apenas as entidades que passam no filtro
-		var filteredResults []interface{}
-		for _, result := range allResults {
-			if s.entityMatchesFilter(result, expandFilterQuery, relatedMetadata) {
-				filteredResults = append(filteredResults, result)
-			}
-		}
-
-		// Processa expansões recursivas apenas nas entidades que passaram no filtro
-		if len(expandOption.Expand) > 0 && len(filteredResults) > 0 {
-			filteredResults, err = relatedService.processExpandedNavigation(ctx, filteredResults, expandOption.Expand)
-			if err != nil {
-				return nil, fmt.Errorf("failed to process recursive expanded navigation: %w", err)
-			}
-		}
-
-		return filteredResults, nil
-	} else {
-		// Para propriedades únicas (N:1), verifica se a entidade encontrada passa no filtro
-		if len(allResults) == 0 {
-			return nil, nil // Não há entidade relacionada
-		}
-
-		// Verifica se a entidade encontrada passa no filtro do expand
-		entity := allResults[0]
-		if s.entityMatchesFilter(entity, expandFilterQuery, relatedMetadata) {
-			// Entidade passa no filtro - processa expansões recursivas
-			if len(expandOption.Expand) > 0 {
-				expandedResults, err := relatedService.processExpandedNavigation(ctx, []interface{}{entity}, expandOption.Expand)
-				if err != nil {
-					return nil, fmt.Errorf("failed to process recursive expanded navigation: %w", err)
-				}
-				return expandedResults, nil
-			}
-			return []interface{}{entity}, nil
-		} else {
-			// Entidade NÃO passa no filtro - retorna nil para indicar que deve ser null
-			return nil, nil
-		}
-	}
-}
-
 // convertValueToPropertyType converte o valor para o tipo correto baseado nos metadados da propriedade
-func (s *BaseEntityService) convertValueToPropertyType(value interface{}, propertyName string, metadata EntityMetadata) (interface{}, error) {
+func (s *BaseEntityService) convertValueToPropertyType(value any, propertyName string, metadata EntityMetadata) (any, error) {
 	// Se o valor é nil, retorna nil
 	if value == nil {
 		return nil, nil
@@ -1429,13 +1044,13 @@ func (s *BaseEntityService) buildNavigationLink(prop PropertyMetadata, entity *O
 	// Ex: "FabTarefa(53)/FabOperacao"
 
 	// Obtém as chaves primárias da entidade atual
-	var keyValues []interface{}
+	var keyValues []any
 
 	// Busca as chaves primárias de forma mais robusta
 	for _, metaProp := range s.metadata.Properties {
 		if metaProp.IsKey {
 			var found bool
-			var keyValue interface{}
+			var keyValue any
 
 			// Tenta várias formas de encontrar a chave
 			searchNames := []string{
@@ -1508,6 +1123,7 @@ func (s *BaseEntityService) buildNavigationLink(prop PropertyMetadata, entity *O
 }
 
 // getJSONTagName extrai o nome do tag JSON de uma propriedade
+/*
 func getJSONTagName(propertyName string) string {
 	// Converte de PascalCase para camelCase
 	if len(propertyName) == 0 {
@@ -1521,6 +1137,7 @@ func getJSONTagName(propertyName string) string {
 
 	return propertyName
 }
+*/
 
 // processComputeOption processa e valida uma opção $compute
 func (s *BaseEntityService) processComputeOption(ctx context.Context, computeOption *ComputeOption) error {
@@ -1592,128 +1209,29 @@ func (s *BaseEntityService) GetSearchableProperties() []PropertyMetadata {
 	return s.searchParser.GetSearchableProperties(s.metadata)
 }
 
-// formatFilterValue retorna o valor formatado de acordo com o tipo
-func (s *BaseEntityService) formatFilterValue(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		return fmt.Sprintf("'%s'", v)
-	case int, int8, int16, int32, int64:
-		return fmt.Sprintf("%v", v)
-	case float32, float64:
-		return fmt.Sprintf("%v", v)
-	case bool:
-		return fmt.Sprintf("%v", v)
-	default:
-		return fmt.Sprintf("'%v'", v)
-	}
-}
-
-// getArgsTypes retorna os tipos dos argumentos para debug
-func (s *BaseEntityService) getArgsTypes(args []interface{}) []string {
-	var types []string
-	for _, arg := range args {
-		types = append(types, fmt.Sprintf("%T", arg))
-	}
-	return types
-}
-
-// createSanitizedFilter cria um filtro sanitizado para evitar caracteres inválidos
-func (s *BaseEntityService) createSanitizedFilter(property string, value interface{}) string {
-	// Sanitiza o nome da propriedade removendo caracteres inválidos
-	sanitizedProperty := strings.ReplaceAll(property, "'", "''") // Escape de aspas simples
-
-	// Formata o valor de forma segura
-	formattedValue := s.formatFilterValueSafe(value)
-
-	return fmt.Sprintf("%s eq %s", sanitizedProperty, formattedValue)
-}
-
 // parseFilterWithTimeout faz parse do filter com timeout apropriado
 func (s *BaseEntityService) parseFilterWithTimeout(ctx context.Context, filter string) (*GoDataFilterQuery, error) {
 	return ParseFilterString(ctx, filter)
 }
 
-// buildQueryWithTimeoutProtection constrói query com proteção contra timeout
-func (s *BaseEntityService) buildQueryWithTimeoutProtection(ctx context.Context, metadata EntityMetadata, options QueryOptions) (string, []interface{}, error) {
-	// Verifica se o provider suporta query otimizada com contexto
-	if optimizedProvider, ok := s.provider.(interface {
-		BuildSelectQueryOptimized(ctx context.Context, metadata EntityMetadata, options QueryOptions) (string, []interface{}, error)
-	}); ok {
-		return optimizedProvider.BuildSelectQueryOptimized(ctx, metadata, options)
-	}
-
-	// Fallback para método padrão
-	return s.provider.BuildSelectQuery(metadata, options)
-}
-
-// formatFilterValueSafe retorna o valor formatado de forma segura para Oracle
-func (s *BaseEntityService) formatFilterValueSafe(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		// Escape de aspas simples e remoção de caracteres de controle
-		escaped := strings.ReplaceAll(v, "'", "''")
-		// Remove caracteres de controle que podem causar ORA-00911
-		sanitized := strings.Map(func(r rune) rune {
-			if r < 32 && r != '\t' && r != '\n' && r != '\r' {
-				return -1 // Remove caractere
-			}
-			return r
-		}, escaped)
-		return fmt.Sprintf("'%s'", sanitized)
-	case int, int8, int16, int32, int64:
-		return fmt.Sprintf("%v", v)
-	case float32, float64:
-		return fmt.Sprintf("%v", v)
-	case bool:
-		return fmt.Sprintf("%v", v)
-	default:
-		// Para outros tipos, converte para string e sanitiza
-		str := fmt.Sprintf("%v", v)
-		escaped := strings.ReplaceAll(str, "'", "''")
-		sanitized := strings.Map(func(r rune) rune {
-			if r < 32 && r != '\t' && r != '\n' && r != '\r' {
-				return -1
-			}
-			return r
-		}, escaped)
-		return fmt.Sprintf("'%s'", sanitized)
-	}
-}
-
 // executeQuery executa uma query com os argumentos apropriados para o provider
-func (s *BaseEntityService) executeQuery(ctx context.Context, query string, args []interface{}) (*sql.Rows, error) {
-	log.Printf("🔍 executeQuery - Starting execution")
-	log.Printf("🔍 executeQuery - Query: %s", query)
-	log.Printf("🔍 executeQuery - Args: %+v", args)
-	log.Printf("🔍 executeQuery - Provider driver: %s", s.provider.GetDriverName())
+func (s *BaseEntityService) executeQuery(ctx context.Context, query string, args []any) (*sql.Rows, error) {
 
 	// Verifica se a conexão está disponível
 	conn := s.provider.GetConnection()
 	if conn == nil {
-		log.Printf("❌ executeQuery - Database connection is nil")
 		return nil, fmt.Errorf("database connection is nil - make sure the provider is properly connected")
 	}
 
-	log.Printf("✅ executeQuery - Database connection OK")
-
-	// O driver Oracle irá reconhecer automaticamente os argumentos nomeados
-	for i, arg := range args {
-		log.Printf("🔍 executeQuery - Arg[%d]: value=%v, type=%T", i, arg, arg)
-	}
-
-	log.Printf("🔍 executeQuery - Using sql.Named arguments")
-
 	rows, err := conn.QueryContext(ctx, query, args...)
 	if err != nil {
-		log.Printf("❌ executeQuery - Error with sql.Named arguments: %v", err)
 		return nil, err
 	}
-	log.Printf("✅ executeQuery - sql.Named arguments query executed successfully")
 	return rows, nil
 }
 
 // executeExec executa um comando com os argumentos apropriados para o provider
-func (s *BaseEntityService) executeExec(ctx context.Context, query string, args []interface{}) (sql.Result, error) {
+func (s *BaseEntityService) executeExec(ctx context.Context, query string, args []any) (sql.Result, error) {
 	// Verifica se a conexão está disponível
 	conn := s.provider.GetConnection()
 	if conn == nil {
@@ -1724,7 +1242,7 @@ func (s *BaseEntityService) executeExec(ctx context.Context, query string, args 
 }
 
 // entityMatchesFilter verifica se uma entidade atende ao filtro especificado
-func (s *BaseEntityService) entityMatchesFilter(entity interface{}, filter *GoDataFilterQuery, metadata EntityMetadata) bool {
+func (s *BaseEntityService) entityMatchesFilter(entity any, filter *GoDataFilterQuery, metadata EntityMetadata) bool {
 	if filter == nil || filter.Tree == nil {
 		return true
 	}
@@ -1784,7 +1302,7 @@ func (s *BaseEntityService) evaluateFilterNode(entity *OrderedEntity, node *Pars
 }
 
 // evaluateFilterValue avalia um valor no filtro (propriedade ou literal)
-func (s *BaseEntityService) evaluateFilterValue(entity *OrderedEntity, node *ParseNode, metadata EntityMetadata) interface{} {
+func (s *BaseEntityService) evaluateFilterValue(entity *OrderedEntity, node *ParseNode, metadata EntityMetadata) any {
 	if node == nil {
 		return nil
 	}
@@ -1816,7 +1334,7 @@ func (s *BaseEntityService) evaluateFilterValue(entity *OrderedEntity, node *Par
 }
 
 // parseFilterLiteral converte um literal string para o tipo apropriado
-func (s *BaseEntityService) parseFilterLiteral(literal string) interface{} {
+func (s *BaseEntityService) parseFilterLiteral(literal string) any {
 	// Remove aspas se for string
 	if len(literal) >= 2 && literal[0] == '\'' && literal[len(literal)-1] == '\'' {
 		return literal[1 : len(literal)-1]
@@ -1842,7 +1360,7 @@ func (s *BaseEntityService) parseFilterLiteral(literal string) interface{} {
 }
 
 // compareValues compara dois valores usando o operador especificado
-func (s *BaseEntityService) compareValues(left, right interface{}, operator string) bool {
+func (s *BaseEntityService) compareValues(left, right any, operator string) bool {
 	// Converte para string para comparação
 	leftStr := fmt.Sprintf("%v", left)
 	rightStr := fmt.Sprintf("%v", right)
@@ -1911,7 +1429,7 @@ func (s *BaseEntityService) convertExpandItemsToExpandOptions(items []*ExpandIte
 }
 
 // applyComputeToResults aplica campos computados aos resultados seguindo a ordem OData v4
-func (s *BaseEntityService) applyComputeToResults(ctx context.Context, results []interface{}, computeOption *ComputeOption) ([]interface{}, error) {
+func (s *BaseEntityService) applyComputeToResults(ctx context.Context, results []any, computeOption *ComputeOption) ([]any, error) {
 	if computeOption == nil || len(computeOption.Expressions) == 0 {
 		return results, nil
 	}
@@ -1941,7 +1459,7 @@ func (s *BaseEntityService) applyComputeToResults(ctx context.Context, results [
 }
 
 // evaluateComputeExpression avalia uma expressão computada
-func (s *BaseEntityService) evaluateComputeExpression(ctx context.Context, expr ComputeExpression, entity *OrderedEntity) (interface{}, error) {
+func (s *BaseEntityService) evaluateComputeExpression(ctx context.Context, expr ComputeExpression, entity *OrderedEntity) (any, error) {
 	if expr.ParseTree == nil {
 		return nil, fmt.Errorf("compute expression has no parse tree")
 	}
@@ -1950,7 +1468,7 @@ func (s *BaseEntityService) evaluateComputeExpression(ctx context.Context, expr 
 }
 
 // evaluateComputeNode avalia um nó da árvore de compute
-func (s *BaseEntityService) evaluateComputeNode(ctx context.Context, node *ParseNode, entity *OrderedEntity) (interface{}, error) {
+func (s *BaseEntityService) evaluateComputeNode(ctx context.Context, node *ParseNode, entity *OrderedEntity) (any, error) {
 	if node == nil {
 		return nil, fmt.Errorf("compute node is nil")
 	}
@@ -2006,7 +1524,7 @@ func (s *BaseEntityService) evaluateComputeNode(ctx context.Context, node *Parse
 }
 
 // evaluateArithmeticOperation avalia operações aritméticas
-func (s *BaseEntityService) evaluateArithmeticOperation(operator string, left, right interface{}) (interface{}, error) {
+func (s *BaseEntityService) evaluateArithmeticOperation(operator string, left, right any) (any, error) {
 	// Converte para números
 	leftNum, err := s.convertToNumber(left)
 	if err != nil {
@@ -2036,7 +1554,7 @@ func (s *BaseEntityService) evaluateArithmeticOperation(operator string, left, r
 }
 
 // convertToNumber converte um valor para número
-func (s *BaseEntityService) convertToNumber(value interface{}) (float64, error) {
+func (s *BaseEntityService) convertToNumber(value any) (float64, error) {
 	switch v := value.(type) {
 	case int:
 		return float64(v), nil
@@ -2059,7 +1577,7 @@ func (s *BaseEntityService) convertToNumber(value interface{}) (float64, error) 
 }
 
 // processExpandedNavigationWithOrder processa navegações expandidas seguindo a ordem OData v4
-func (s *BaseEntityService) processExpandedNavigationWithOrder(ctx context.Context, results []interface{}, expandOptions []ExpandOption) ([]interface{}, error) {
+func (s *BaseEntityService) processExpandedNavigationWithOrder(ctx context.Context, results []any, expandOptions []ExpandOption) ([]any, error) {
 	if len(results) == 0 {
 		return results, nil
 	}
@@ -2129,7 +1647,7 @@ func (s *BaseEntityService) expandNavigationPropertyWithOrder(ctx context.Contex
 	// Adiciona as entidades relacionadas ao resultado
 	if navProperty.IsCollection {
 		if relatedEntities == nil {
-			entity.Set(navProperty.Name, []interface{}{})
+			entity.Set(navProperty.Name, []any{})
 		} else {
 			entity.Set(navProperty.Name, relatedEntities)
 		}
@@ -2147,7 +1665,7 @@ func (s *BaseEntityService) expandNavigationPropertyWithOrder(ctx context.Contex
 }
 
 // findRelatedEntitiesWithOrder encontra entidades relacionadas seguindo a ordem OData v4
-func (s *BaseEntityService) findRelatedEntitiesWithOrder(ctx context.Context, navProperty *PropertyMetadata, entity *OrderedEntity, expandOption ExpandOption) ([]interface{}, error) {
+func (s *BaseEntityService) findRelatedEntitiesWithOrder(ctx context.Context, navProperty *PropertyMetadata, entity *OrderedEntity, expandOption ExpandOption) ([]any, error) {
 	if navProperty.Relationship == nil {
 		return nil, fmt.Errorf("navigation property has no relationship metadata")
 	}
@@ -2261,8 +1779,8 @@ func (s *BaseEntityService) findRelatedEntitiesWithOrder(ctx context.Context, na
 		return nil, fmt.Errorf("failed to query related entities: %w", err)
 	}
 
-	// Converte response.Value para []interface{}
-	entities, ok := response.Value.([]interface{})
+	// Converte response.Value para []any
+	entities, ok := response.Value.([]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected response type: %T", response.Value)
 	}
@@ -2272,8 +1790,8 @@ func (s *BaseEntityService) findRelatedEntitiesWithOrder(ctx context.Context, na
 }
 
 // filterRelatedEntities filtra entidades relacionadas baseado no relacionamento
-func (s *BaseEntityService) filterRelatedEntities(entities []interface{}, navProperty *PropertyMetadata, keyValue interface{}, relatedMetadata EntityMetadata) ([]interface{}, error) {
-	var filtered []interface{}
+func (s *BaseEntityService) filterRelatedEntities(entities []any, navProperty *PropertyMetadata, keyValue any, relatedMetadata EntityMetadata) ([]any, error) {
+	var filtered []any
 
 	for _, entity := range entities {
 		orderedEntity, ok := entity.(*OrderedEntity)
@@ -2282,7 +1800,7 @@ func (s *BaseEntityService) filterRelatedEntities(entities []interface{}, navPro
 		}
 
 		// Obtém o valor da propriedade de relacionamento
-		var relationshipValue interface{}
+		var relationshipValue any
 		var exists bool
 
 		if navProperty.IsCollection {
@@ -2307,7 +1825,7 @@ func (s *BaseEntityService) filterRelatedEntities(entities []interface{}, navPro
 }
 
 // applySelectToResults aplica seleção de campos aos resultados
-func (s *BaseEntityService) applySelectToResults(results []interface{}, selectQuery *GoDataSelectQuery) ([]interface{}, error) {
+func (s *BaseEntityService) applySelectToResults(results []any, selectQuery *GoDataSelectQuery) ([]any, error) {
 	if selectQuery == nil {
 		return results, nil
 	}

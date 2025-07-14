@@ -1,18 +1,16 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"time"
 
-	"github.com/godata/pkg/odata"
-	"github.com/godata/pkg/providers"
+	"github.com/fitlcarlos/godata/pkg/odata"
+	_ "github.com/fitlcarlos/godata/pkg/providers" // Importa providers para registrar factories
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/recover"
-	_ "github.com/lib/pq"
 )
 
 // User representa uma entidade de usuário
@@ -38,18 +36,8 @@ type Product struct {
 }
 
 func main() {
-	// Conecta ao banco de dados
-	db, err := sql.Open("postgres", "host=localhost user=postgres password=postgres dbname=testdb sslmode=disable")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-
-	// Cria o provider
-	provider := providers.NewPostgreSQLProvider(db)
-
-	// Cria o servidor
-	server := odata.NewServer(provider, "localhost", 8080, "/odata")
+	// Cria o servidor (carrega automaticamente configurações do .env se disponível)
+	server := odata.NewServer()
 
 	// Registra as entidades
 	if err := server.RegisterEntity("Users", User{}); err != nil {
@@ -280,29 +268,15 @@ func getCurrentUserID(ctx *odata.EventContext) string {
 
 // Exemplo de uso com Fiber customizado
 func createFiberApp() *fiber.App {
-	app := fiber.New(fiber.Config{
-		ErrorHandler: func(c fiber.Ctx, err error) error {
-			code := fiber.StatusInternalServerError
-			if e, ok := err.(*fiber.Error); ok {
-				code = e.Code
-			}
-
-			log.Printf("❌ Erro na aplicação: %v", err)
-
-			return c.Status(code).JSON(fiber.Map{
-				"error": true,
-				"msg":   err.Error(),
-			})
-		},
-	})
+	app := fiber.New()
 
 	// Middlewares
 	app.Use(recover.New())
 	app.Use(logger.New())
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders: "*",
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders: []string{"*"},
 	}))
 
 	return app

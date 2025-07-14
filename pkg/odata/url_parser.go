@@ -100,6 +100,7 @@ func (up *URLParser) isSimpleQuery(query string) bool {
 	inQuotes := false
 	var quoteChar rune
 
+Loop:
 	for _, char := range query {
 		switch char {
 		case '\'', '"':
@@ -114,7 +115,7 @@ func (up *URLParser) isSimpleQuery(query string) bool {
 				parenthesesCount++
 				if parenthesesCount > 2 { // Tolerância para cases simples
 					simple = false
-					break
+					break Loop
 				}
 			}
 		case ')':
@@ -125,7 +126,7 @@ func (up *URLParser) isSimpleQuery(query string) bool {
 			// Semicolons dentro de valores OData tornam a query complexa
 			// O parser padrão do Go não suporta semicolons
 			simple = false
-			break
+			break Loop
 		}
 	}
 

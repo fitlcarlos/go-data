@@ -170,7 +170,7 @@ func TestExpandFilterBidirectional(t *testing.T) {
 	provider := &MockDatabaseProvider{}
 
 	// Cria servidor OData
-	server := NewServer(provider, "localhost", 8080, "/odata")
+	server := NewServerWithProvider(provider, "localhost", 8080, "/odata")
 
 	// Registra os serviços
 	server.RegisterEntity("FabTarefa", fabTarefaMetadata)
@@ -481,7 +481,7 @@ func TestExpandFilterWithNull(t *testing.T) {
 	provider := &MockDatabaseProvider{}
 
 	// Cria servidor OData
-	server := NewServer(provider, "localhost", 8080, "/odata")
+	server := NewServerWithProvider(provider, "localhost", 8080, "/odata")
 
 	// Registra os serviços
 	server.RegisterEntity("FabTarefa", fabTarefaMetadata)
@@ -623,7 +623,7 @@ func TestExpandFilterBehaviorExactExample(t *testing.T) {
 	}
 
 	provider := &MockDatabaseProvider{}
-	server := NewServer(provider, "localhost", 8080, "/odata")
+	server := NewServerWithProvider(provider, "localhost", 8080, "/odata")
 	server.RegisterEntity("FabTarefa", fabTarefaMetadata)
 	server.RegisterEntity("FabOperacao", fabOperacaoMetadata)
 
@@ -794,7 +794,7 @@ func TestExpandRecursiveRealScenario(t *testing.T) {
 	}
 
 	provider := &MockDatabaseProvider{}
-	server := NewServer(provider, "localhost", 8080, "/odata")
+	server := NewServerWithProvider(provider, "localhost", 8080, "/odata")
 	server.RegisterEntity("FabTarefa", fabTarefaMetadata)
 	server.RegisterEntity("FabOperacao", fabOperacaoMetadata)
 

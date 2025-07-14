@@ -13,16 +13,83 @@ import (
 	_ "github.com/sijms/go-ora/v2"
 )
 
+// Registrar factory do Oracle no registry
+func init() {
+	odata.RegisterProvider("oracle", func() odata.DatabaseProvider {
+		return NewOracleProvider()
+	})
+}
+
 // OracleProvider implementa o DatabaseProvider para Oracle
 type OracleProvider struct {
 	*BaseProvider
 }
 
 // NewOracleProvider cria um novo OracleProvider
-func NewOracleProvider(connection *sql.DB) *OracleProvider {
-	return &OracleProvider{
-		BaseProvider: NewBaseProvider(connection, "oracle"),
+func NewOracleProvider(connection ...*sql.DB) *OracleProvider {
+	var db *sql.DB
+
+	// Se não recebeu conexão, tenta carregar do .env
+	if len(connection) == 0 || connection[0] == nil {
+		config, err := odata.LoadEnvOrDefault()
+		if err != nil {
+			log.Printf("Aviso: Não foi possível carregar configurações do .env: %v", err)
+			return &OracleProvider{
+				BaseProvider: NewBaseProvider(nil, "oracle"),
+			}
+		}
+
+		// Imprime configurações carregadas
+		config.PrintLoadedConfig()
+
+		// Cria conexão com base no .env
+		connectionString := config.BuildConnectionString()
+
+		// Tenta conectar se há configurações suficientes
+		if config.DBUser != "" && config.DBPassword != "" {
+			var err error
+			db, err = sql.Open("oracle", connectionString)
+			if err != nil {
+				log.Printf("Erro ao conectar ao Oracle usando .env: %v", err)
+				return &OracleProvider{
+					BaseProvider: NewBaseProvider(nil, "oracle"),
+				}
+			}
+
+			// Configura pool de conexões
+			db.SetMaxOpenConns(config.DBMaxOpenConns)
+			db.SetMaxIdleConns(config.DBMaxIdleConns)
+			db.SetConnMaxLifetime(config.DBConnMaxLifetime)
+
+			// Testa conexão
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := db.PingContext(ctx); err != nil {
+				log.Printf("Erro ao testar conexão Oracle: %v", err)
+				db.Close()
+				return &OracleProvider{
+					BaseProvider: NewBaseProvider(nil, "oracle"),
+				}
+			}
+
+			log.Printf("✅ Conexão Oracle estabelecida usando configurações do .env")
+		}
+	} else {
+		db = connection[0]
 	}
+
+	provider := &OracleProvider{
+		BaseProvider: NewBaseProvider(db, "oracle"),
+	}
+
+	// Inicializa query builder e parsers se há conexão
+	if db != nil {
+		provider.InitQueryBuilder()
+		provider.InitParsers()
+	}
+
+	return provider
 }
 
 // GetDriverName retorna o nome do driver

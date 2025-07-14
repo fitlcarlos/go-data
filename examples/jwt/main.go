@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/fitlcarlos/godata/pkg/odata"
-	"github.com/fitlcarlos/godata/pkg/providers"
+	_ "github.com/fitlcarlos/godata/pkg/providers" // Importa providers para registrar factories
 )
 
 // User representa um usuário do sistema
@@ -56,6 +56,8 @@ func NewSimpleUserAuthenticator() *SimpleUserAuthenticator {
 				Scopes:   []string{"read", "write", "delete"},
 				Admin:    true,
 				Custom: map[string]interface{}{
+					"name":       "Administrator",
+					"email":      "admin@example.com",
 					"department": "IT",
 					"level":      "senior",
 				},
@@ -66,8 +68,10 @@ func NewSimpleUserAuthenticator() *SimpleUserAuthenticator {
 				Scopes:   []string{"read", "write"},
 				Admin:    false,
 				Custom: map[string]interface{}{
+					"name":       "Manager User",
+					"email":      "manager@example.com",
 					"department": "Sales",
-					"level":      "manager",
+					"level":      "intermediate",
 				},
 			},
 			"user": {
@@ -76,7 +80,9 @@ func NewSimpleUserAuthenticator() *SimpleUserAuthenticator {
 				Scopes:   []string{"read"},
 				Admin:    false,
 				Custom: map[string]interface{}{
-					"department": "Marketing",
+					"name":       "Regular User",
+					"email":      "user@example.com",
+					"department": "Customer Service",
 					"level":      "junior",
 				},
 			},
@@ -84,9 +90,8 @@ func NewSimpleUserAuthenticator() *SimpleUserAuthenticator {
 	}
 }
 
-// Authenticate autentica um usuário
 func (a *SimpleUserAuthenticator) Authenticate(username, password string) (*odata.UserIdentity, error) {
-	// Simulação simples: senha deve ser "password123"
+	// Verificação simples de senha (não segura, apenas para demonstração)
 	if password != "password123" {
 		return nil, errors.New("senha inválida")
 	}
@@ -99,7 +104,6 @@ func (a *SimpleUserAuthenticator) Authenticate(username, password string) (*odat
 	return user, nil
 }
 
-// GetUserByUsername obtém um usuário pelo nome de usuário
 func (a *SimpleUserAuthenticator) GetUserByUsername(username string) (*odata.UserIdentity, error) {
 	user, exists := a.users[username]
 	if !exists {
@@ -109,31 +113,8 @@ func (a *SimpleUserAuthenticator) GetUserByUsername(username string) (*odata.Use
 }
 
 func main() {
-	// Configurar provider de banco de dados
-	provider := providers.NewPostgreSQLProvider()
-	// Conectar ao banco (em um caso real, você configuraria a connection string)
-	// provider.Connect("postgres://user:password@localhost:5432/testdb?sslmode=disable")
-
-	// Configurar JWT
-	jwtConfig := &odata.JWTConfig{
-		SecretKey: "minha-chave-secreta-super-segura-123",
-		Issuer:    "exemplo-godata-jwt",
-		ExpiresIn: 1 * time.Hour,
-		RefreshIn: 24 * time.Hour,
-		Algorithm: "HS256",
-	}
-
-	// Configurar servidor com JWT
-	config := odata.DefaultServerConfig()
-	config.Host = "localhost"
-	config.Port = 8080
-	config.RoutePrefix = "/api/v1"
-	config.EnableJWT = true
-	config.JWTConfig = jwtConfig
-	config.RequireAuth = false // Não requer autenticação global por padrão
-
-	// Criar servidor
-	server := odata.NewServerWithConfig(provider, config)
+	// Cria o servidor (carrega automaticamente configurações do .env se disponível)
+	server := odata.NewServer()
 
 	// Configurar autenticador
 	authenticator := NewSimpleUserAuthenticator()
@@ -207,7 +188,7 @@ func main() {
 	fmt.Println()
 
 	// Iniciar servidor
-	log.Printf("Iniciando servidor na porta %d...", config.Port)
+	log.Println("🚀 Servidor iniciado com configurações automaticamente carregadas")
 	if err := server.StartWithContext(context.Background()); err != nil {
 		log.Fatal("Erro ao iniciar servidor:", err)
 	}

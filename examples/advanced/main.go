@@ -9,8 +9,7 @@ import (
 
 	"github.com/fitlcarlos/godata/pkg/odata"
 	"github.com/fitlcarlos/godata/pkg/providers"
-
-	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/fitlcarlos/godata/pkg/providers" // Importa providers para registrar factories
 )
 
 // Exemplo de uso avançado do servidor HTTP embutido
@@ -44,21 +43,15 @@ func main() {
 	log.Println("=== GoData OData Server - Configurações Avançadas ===")
 	log.Println()
 
-	// Configuração avançada do servidor
-	config := createAdvancedConfig()
+	// Cria o servidor (carrega automaticamente configurações do .env se disponível)
+	server := odata.NewServer()
 
-	// Configuração do banco (MySQL para este exemplo)
-	provider := createDatabaseProvider()
-
-	// Cria servidor com configurações avançadas
-	server := odata.NewServerWithConfig(provider, config)
-
-	// Registra entidades
+	// Registrar entidades
 	if err := registerEntities(server); err != nil {
-		log.Fatalf("Erro ao registrar entidades: %v", err)
+		log.Fatal("Erro ao registrar entidades:", err)
 	}
 
-	// Inicia servidor
+	// Iniciar servidor
 	startServer(server)
 }
 

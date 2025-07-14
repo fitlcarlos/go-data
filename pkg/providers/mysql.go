@@ -1,8 +1,10 @@
 package providers
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -11,18 +13,92 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+// Registrar factory do MySQL no registry
+func init() {
+	odata.RegisterProvider("mysql", func() odata.DatabaseProvider {
+		return NewMySQLProvider()
+	})
+}
+
 // MySQLProvider implementa o provider para MySQL
 type MySQLProvider struct {
 	BaseProvider
 }
 
 // NewMySQLProvider cria uma nova instância do provider MySQL
-func NewMySQLProvider() *MySQLProvider {
-	return &MySQLProvider{
+func NewMySQLProvider(connection ...*sql.DB) *MySQLProvider {
+	var db *sql.DB
+
+	// Se não recebeu conexão, tenta carregar do .env
+	if len(connection) == 0 || connection[0] == nil {
+		config, err := odata.LoadEnvOrDefault()
+		if err != nil {
+			log.Printf("Aviso: Não foi possível carregar configurações do .env: %v", err)
+			return &MySQLProvider{
+				BaseProvider: BaseProvider{
+					driverName: "mysql",
+				},
+			}
+		}
+
+		// Imprime configurações carregadas
+		config.PrintLoadedConfig()
+
+		// Cria conexão com base no .env
+		connectionString := config.BuildConnectionString()
+
+		// Tenta conectar se há configurações suficientes
+		if config.DBUser != "" && config.DBPassword != "" {
+			var err error
+			db, err = sql.Open("mysql", connectionString)
+			if err != nil {
+				log.Printf("Erro ao conectar ao MySQL usando .env: %v", err)
+				return &MySQLProvider{
+					BaseProvider: BaseProvider{
+						driverName: "mysql",
+					},
+				}
+			}
+
+			// Configura pool de conexões
+			db.SetMaxOpenConns(config.DBMaxOpenConns)
+			db.SetMaxIdleConns(config.DBMaxIdleConns)
+			db.SetConnMaxLifetime(config.DBConnMaxLifetime)
+
+			// Testa conexão
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := db.PingContext(ctx); err != nil {
+				log.Printf("Erro ao testar conexão MySQL: %v", err)
+				db.Close()
+				return &MySQLProvider{
+					BaseProvider: BaseProvider{
+						driverName: "mysql",
+					},
+				}
+			}
+
+			log.Printf("✅ Conexão MySQL estabelecida usando configurações do .env")
+		}
+	} else {
+		db = connection[0]
+	}
+
+	provider := &MySQLProvider{
 		BaseProvider: BaseProvider{
 			driverName: "mysql",
+			db:         db,
 		},
 	}
+
+	// Inicializa query builder e parsers se há conexão
+	if db != nil {
+		provider.InitQueryBuilder()
+		provider.InitParsers()
+	}
+
+	return provider
 }
 
 // Connect conecta ao banco MySQL

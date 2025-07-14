@@ -6,9 +6,11 @@ Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fib
 
 - [Características](#-características)
 - [Instalação](#-instalação)
+- [Configuração com .env](#-configuração-com-env)
 - [Exemplo de Uso](#-exemplo-de-uso)
 - [Configuração do Servidor](#-configuração-do-servidor)
 - [Autenticação JWT](#-autenticação-jwt)
+- [Multi-Tenant](#-multi-tenant)
 - [Eventos de Entidade](#-eventos-de-entidade)
 - [Mapeamento de Entidades](#-mapeamento-de-entidades)
 - [Bancos de Dados Suportados](#-bancos-de-dados-suportados)
@@ -18,6 +20,8 @@ Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fib
 - [Mapeamento de Tipos](#-mapeamento-de-tipos)
 - [Contribuindo](#-contribuindo)
 - [Licença](#-licença)
+- [Exemplos](#-exemplos)
+- [Suporte](#-suporte)
 
 ## ✨ Características
 
@@ -65,13 +69,290 @@ Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fib
 - Configuração de autenticação por entidade
 - Entidades somente leitura
 
+### 🏢 **Multi-Tenant**
+- Suporte completo a multi-tenant com isolamento de dados
+- Identificação automática via headers, subdomains, path ou JWT
+- Pool de conexões gerenciado automaticamente para cada tenant
+- Configuração via .env com múltiplos bancos de dados
+- Endpoints específicos para gerenciamento de tenants
+- Escalabilidade com adição dinâmica de novos tenants
+
+### ⚙️ **Configuração Automática**
+- Carregamento automático de configurações via arquivo `.env`
+- Busca automática do arquivo `.env` na árvore de diretórios
+- Valores padrão sensatos quando `.env` não encontrado
+- Configuração completa de banco de dados, servidor, TLS e JWT
+
 ## 🚀 Instalação
 
 ```bash
 go get github.com/fitlcarlos/godata
 ```
 
+## 🛠️ Configuração com .env
+
+O GoData suporta configuração automática através de arquivos `.env`, similar ao Spring Boot. O sistema busca automaticamente por arquivos `.env` no diretório atual e diretórios pai.
+
+### Exemplo de arquivo .env
+
+```env
+# Configurações do Banco de Dados
+DB_TYPE=postgresql
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=testdb
+DB_SCHEMA=public
+DB_CONNECTION_STRING=
+DB_MAX_OPEN_CONNS=25
+DB_MAX_IDLE_CONNS=5
+DB_CONN_MAX_LIFETIME=600s
+
+# Configurações do Servidor OData
+SERVER_HOST=localhost
+SERVER_PORT=8080
+SERVER_ROUTE_PREFIX=/odata
+SERVER_ENABLE_CORS=true
+SERVER_ALLOWED_ORIGINS=*
+SERVER_ALLOWED_METHODS=GET,POST,PUT,PATCH,DELETE,OPTIONS
+SERVER_ALLOWED_HEADERS=*
+SERVER_EXPOSED_HEADERS=OData-Version,Content-Type
+SERVER_ALLOW_CREDENTIALS=false
+SERVER_ENABLE_LOGGING=true
+SERVER_LOG_LEVEL=INFO
+SERVER_LOG_FILE=
+SERVER_ENABLE_COMPRESSION=false
+SERVER_MAX_REQUEST_SIZE=10485760
+SERVER_SHUTDOWN_TIMEOUT=30s
+
+# Configurações de SSL/TLS
+SERVER_TLS_CERT_FILE=
+SERVER_TLS_KEY_FILE=
+
+# Configurações de JWT
+JWT_ENABLED=false
+JWT_SECRET_KEY=
+JWT_ISSUER=godata-server
+JWT_EXPIRES_IN=1h
+JWT_REFRESH_IN=24h
+JWT_ALGORITHM=HS256
+JWT_REQUIRE_AUTH=false
+
+# Configurações Multi-Tenant
+MULTI_TENANT_ENABLED=false
+TENANT_IDENTIFICATION_MODE=header
+TENANT_HEADER_NAME=X-Tenant-ID
+DEFAULT_TENANT=default
+
+# Configurações específicas por tenant (exemplo)
+TENANT_EMPRESA_A_DB_TYPE=postgresql
+TENANT_EMPRESA_A_DB_HOST=localhost
+TENANT_EMPRESA_A_DB_PORT=5432
+TENANT_EMPRESA_A_DB_NAME=empresa_a
+TENANT_EMPRESA_A_DB_USER=user_a
+TENANT_EMPRESA_A_DB_PASSWORD=password_a
+```
+
+### Descrição das Variáveis
+
+#### Configurações do Banco de Dados
+- **DB_TYPE**: Tipo do banco de dados (postgresql, mysql, oracle)
+- **DB_HOST**: Endereço do servidor de banco de dados
+- **DB_PORT**: Porta do servidor de banco de dados
+- **DB_NAME**: Nome do banco de dados
+- **DB_USER**: Usuário do banco de dados
+- **DB_PASSWORD**: Senha do banco de dados
+- **DB_SCHEMA**: Schema do banco de dados (opcional)
+- **DB_CONNECTION_STRING**: String de conexão customizada (opcional)
+- **DB_MAX_OPEN_CONNS**: Máximo de conexões abertas (padrão: 25)
+- **DB_MAX_IDLE_CONNS**: Máximo de conexões inativas (padrão: 5)
+- **DB_CONN_MAX_LIFETIME**: Tempo de vida das conexões (padrão: 10m)
+
+#### Configurações do Servidor
+- **SERVER_HOST**: Endereço do servidor OData (padrão: localhost)
+- **SERVER_PORT**: Porta do servidor OData (padrão: 9090)
+- **SERVER_ROUTE_PREFIX**: Prefixo das rotas OData (padrão: /odata)
+- **SERVER_ENABLE_CORS**: Habilita CORS (padrão: true)
+- **SERVER_ALLOWED_ORIGINS**: Origins permitidas para CORS (padrão: *)
+- **SERVER_ALLOWED_METHODS**: Métodos HTTP permitidos
+- **SERVER_ALLOWED_HEADERS**: Headers permitidos
+- **SERVER_EXPOSED_HEADERS**: Headers expostos
+- **SERVER_ALLOW_CREDENTIALS**: Permite credenciais CORS (padrão: false)
+- **SERVER_ENABLE_LOGGING**: Habilita logging (padrão: true)
+- **SERVER_LOG_LEVEL**: Nível de logging (padrão: INFO)
+- **SERVER_LOG_FILE**: Arquivo de log (opcional)
+- **SERVER_ENABLE_COMPRESSION**: Habilita compressão (padrão: false)
+- **SERVER_MAX_REQUEST_SIZE**: Tamanho máximo da requisição (padrão: 10MB)
+- **SERVER_SHUTDOWN_TIMEOUT**: Timeout para shutdown graceful (padrão: 30s)
+
+#### Configurações TLS
+- **SERVER_TLS_CERT_FILE**: Caminho para o arquivo de certificado TLS
+- **SERVER_TLS_KEY_FILE**: Caminho para o arquivo de chave TLS
+
+#### Configurações JWT
+- **JWT_ENABLED**: Habilita autenticação JWT (padrão: false)
+- **JWT_SECRET_KEY**: Chave secreta para assinatura JWT
+- **JWT_ISSUER**: Emissor do token JWT (padrão: godata-server)
+- **JWT_EXPIRES_IN**: Tempo de expiração do token de acesso (padrão: 1h)
+- **JWT_REFRESH_IN**: Tempo de expiração do token de refresh (padrão: 24h)
+- **JWT_ALGORITHM**: Algoritmo de assinatura JWT (padrão: HS256)
+- **JWT_REQUIRE_AUTH**: Requer autenticação para todas as rotas (padrão: false)
+
+#### Configurações Multi-Tenant
+- **MULTI_TENANT_ENABLED**: Habilita suporte multi-tenant (padrão: false)
+- **TENANT_IDENTIFICATION_MODE**: Método de identificação do tenant (header, subdomain, path, jwt)
+- **TENANT_HEADER_NAME**: Nome do header para identificação (padrão: X-Tenant-ID)
+- **DEFAULT_TENANT**: Nome do tenant padrão (padrão: default)
+- **TENANT_[NOME]_DB_TYPE**: Tipo de banco para tenant específico
+- **TENANT_[NOME]_DB_HOST**: Host do banco para tenant específico
+- **TENANT_[NOME]_DB_PORT**: Porta do banco para tenant específico
+- **TENANT_[NOME]_DB_NAME**: Nome do banco para tenant específico
+- **TENANT_[NOME]_DB_USER**: Usuário do banco para tenant específico
+- **TENANT_[NOME]_DB_PASSWORD**: Senha do banco para tenant específico
+
+### Uso Transparente
+
+O método `NewServer()` é **transparente** e carrega automaticamente as configurações do arquivo `.env` quando disponível:
+
+```go
+package main
+
+import (
+    "log"
+    
+    "github.com/fitlcarlos/godata/pkg/odata"
+)
+
+func main() {
+    // Cria servidor automaticamente:
+    // - Se .env existe: carrega configurações completas (servidor + banco)
+    // - Se .env não existe: retorna servidor básico para configuração manual
+    server := odata.NewServer()
+    
+    // Registrar entidades
+    server.RegisterEntity("Users", User{})
+    
+    // Iniciar servidor
+    log.Fatal(server.Start())
+}
+```
+
+### Como Funciona
+
+1. **Busca Automática**: O `NewServer()` busca automaticamente por arquivos `.env` no diretório atual e diretórios pai (até a raiz do sistema)
+2. **Configuração Automática**: Se encontrar `.env` com `DB_TYPE` válido, configura automaticamente o provider de banco e servidor
+3. **Fallback Gracioso**: Se não encontrar `.env` ou `DB_TYPE` inválido, retorna servidor básico para configuração manual
+4. **Zero Configuração**: Não precisa chamar métodos específicos - tudo é automático
+
+### Exemplo com Arquivo .env
+
+1. **Crie um arquivo `.env`** na raiz do projeto:
+
+```env
+# Configuração PostgreSQL
+DB_TYPE=postgresql
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=mypassword
+DB_NAME=mydatabase
+
+# Configuração do servidor
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8080
+SERVER_ROUTE_PREFIX=/api/v1
+
+# JWT (opcional)
+JWT_ENABLED=true
+JWT_SECRET_KEY=minha-chave-secreta-super-segura
+JWT_ISSUER=minha-aplicacao
+
+# Multi-Tenant (opcional)
+MULTI_TENANT_ENABLED=true
+TENANT_IDENTIFICATION_MODE=header
+TENANT_HEADER_NAME=X-Tenant-ID
+DEFAULT_TENANT=default
+
+# Configurações por tenant
+TENANT_EMPRESA_A_DB_TYPE=postgresql
+TENANT_EMPRESA_A_DB_HOST=postgres-a.empresa.com
+TENANT_EMPRESA_A_DB_PORT=5432
+TENANT_EMPRESA_A_DB_NAME=empresa_a
+TENANT_EMPRESA_A_DB_USER=user_a
+TENANT_EMPRESA_A_DB_PASSWORD=password_a
+
+TENANT_EMPRESA_B_DB_TYPE=mysql
+TENANT_EMPRESA_B_DB_HOST=mysql-b.empresa.com
+TENANT_EMPRESA_B_DB_PORT=3306
+TENANT_EMPRESA_B_DB_NAME=empresa_b
+TENANT_EMPRESA_B_DB_USER=user_b
+TENANT_EMPRESA_B_DB_PASSWORD=password_b
+```
+
+2. **Use o servidor transparente**:
+
+```go
+func main() {
+    // Carrega automaticamente todas as configurações do .env
+    server := odata.NewServer()
+    
+    // Registra entidades
+    server.RegisterEntity("Users", User{})
+    server.RegisterEntity("Products", Product{})
+    
+    // Inicia - todas as configurações já estão aplicadas
+    log.Fatal(server.Start())
+}
+```
+
+### Configuração Manual (Fallback)
+
+Se não usar `.env` ou precisar de configurações específicas, ainda pode configurar manualmente:
+
+```go
+// Configuração manual tradicional
+provider := providers.NewPostgreSQLProvider(db)
+server := odata.NewServerWithProvider(provider, "localhost", 8080, "/api")
+
+// Ou configuração completa
+config := odata.DefaultServerConfig()
+config.Host = "localhost"
+config.Port = 8080
+server := odata.NewServerWithConfig(provider, config)
+```
+
 ## 📝 Exemplo de Uso
+
+### Servidor Automático com .env
+
+```go
+package main
+
+import (
+    "log"
+    
+    "github.com/fitlcarlos/godata/pkg/odata"
+)
+
+// Entidade de exemplo
+type User struct {
+    ID    int    `json:"id" odata:"key"`
+    Name  string `json:"name" odata:"required"`
+    Email string `json:"email" odata:"required"`
+}
+
+func main() {
+    // Servidor automático (carrega .env se disponível)
+    server := odata.NewServer()
+    
+    // Registrar entidades
+    server.RegisterEntity("Users", User{})
+    
+    // Iniciar servidor
+    log.Fatal(server.Start())
+}
+```
 
 ### Servidor Básico
 
@@ -98,24 +379,14 @@ func main() {
     // Cria provider
     provider := providers.NewMySQLProvider(db)
     
-    // Cria servidor
-    server := odata.NewServer(provider, "localhost", 8080, "/odata")
+    // Cria servidor com configurações específicas
+    server := odata.NewServerWithProvider(provider, "localhost", 8080, "/odata")
     
     // Registra entidades
-    entities := map[string]interface{}{
-        "Users":    User{},
-        "Products": Product{},
-    }
-    
-    if err := server.AutoRegisterEntities(entities); err != nil {
-        log.Fatal(err)
-    }
+    server.RegisterEntity("Users", User{})
     
     // Inicia servidor
-    log.Println("Servidor iniciado em http://localhost:8080/odata")
-    if err := server.Start(); err != nil {
-        log.Fatal(err)
-    }
+    log.Fatal(server.Start())
 }
 ```
 
@@ -398,6 +669,267 @@ type EntityAuthConfig struct {
     ReadOnly       bool     // Entidade somente leitura
 }
 ```
+
+## 🏢 Multi-Tenant
+
+O GoData oferece suporte completo a multi-tenant, permitindo que uma única instância do servidor gerencie múltiplos bancos de dados para diferentes tenants (clientes, organizações, etc.). Cada tenant mantém isolamento completo dos dados.
+
+### Características Multi-Tenant
+
+- **Identificação automática de tenant** via headers, subdomains, path ou JWT
+- **Pool de conexões** gerenciado automaticamente para cada tenant
+- **Configuração via .env** com suporte a múltiplos bancos de dados
+- **Isolamento completo** de dados por tenant
+- **Compatibilidade** com Oracle, PostgreSQL e MySQL
+- **Endpoints específicos** para monitoramento e gerenciamento de tenants
+- **Escalabilidade** com adição dinâmica de novos tenants
+
+### Configuração Multi-Tenant
+
+#### Arquivo .env
+
+```env
+# Configuração Multi-Tenant
+MULTI_TENANT_ENABLED=true
+TENANT_IDENTIFICATION_MODE=header
+TENANT_HEADER_NAME=X-Tenant-ID
+DEFAULT_TENANT=default
+
+# Configuração do servidor
+SERVER_HOST=localhost
+SERVER_PORT=8080
+SERVER_ROUTE_PREFIX=/api/odata
+
+# Configuração do banco padrão
+DB_TYPE=oracle
+DB_HOST=localhost
+DB_PORT=1521
+DB_NAME=ORCL
+DB_USER=system
+DB_PASSWORD=password
+
+# Configuração específica por tenant
+TENANT_EMPRESA_A_DB_TYPE=oracle
+TENANT_EMPRESA_A_DB_HOST=oracle1.empresa.com
+TENANT_EMPRESA_A_DB_PORT=1521
+TENANT_EMPRESA_A_DB_NAME=EMPRESA_A
+TENANT_EMPRESA_A_DB_USER=user_a
+TENANT_EMPRESA_A_DB_PASSWORD=password_a
+
+TENANT_EMPRESA_B_DB_TYPE=postgres
+TENANT_EMPRESA_B_DB_HOST=postgres1.empresa.com
+TENANT_EMPRESA_B_DB_PORT=5432
+TENANT_EMPRESA_B_DB_NAME=empresa_b
+TENANT_EMPRESA_B_DB_USER=user_b
+TENANT_EMPRESA_B_DB_PASSWORD=password_b
+
+TENANT_EMPRESA_C_DB_TYPE=mysql
+TENANT_EMPRESA_C_DB_HOST=mysql1.empresa.com
+TENANT_EMPRESA_C_DB_PORT=3306
+TENANT_EMPRESA_C_DB_NAME=empresa_c
+TENANT_EMPRESA_C_DB_USER=user_c
+TENANT_EMPRESA_C_DB_PASSWORD=password_c
+```
+
+#### Código do Servidor
+
+```go
+package main
+
+import (
+    "log"
+    
+    "github.com/fitlcarlos/godata/pkg/odata"
+)
+
+func main() {
+    // Cria servidor com carregamento automático de configurações multi-tenant
+    server := odata.NewServer()
+    
+    // Registra as entidades (automaticamente multi-tenant se configurado)
+    server.RegisterEntity("Produtos", &Produto{})
+    server.RegisterEntity("Clientes", &Cliente{})
+    server.RegisterEntity("Pedidos", &Pedido{})
+    
+    // Eventos globais com informações de tenant
+    server.OnEntityListGlobal(func(args odata.EventArgs) error {
+        if listArgs, ok := args.(*odata.EntityListArgs); ok {
+            tenantID := odata.GetCurrentTenant(listArgs.Context.FiberContext)
+            log.Printf("📋 Lista acessada: %s (tenant: %s)", 
+                listArgs.EntityName, tenantID)
+        }
+        return nil
+    })
+    
+    // Inicia o servidor
+    log.Fatal(server.Start())
+}
+```
+
+### Métodos de Identificação de Tenant
+
+#### 1. Header (Padrão)
+
+```bash
+# Listar produtos do tenant padrão
+curl -X GET "http://localhost:8080/api/odata/Produtos"
+
+# Listar produtos da empresa A
+curl -X GET "http://localhost:8080/api/odata/Produtos" \
+  -H "X-Tenant-ID: empresa_a"
+```
+
+#### 2. Subdomain
+
+Configure `TENANT_IDENTIFICATION_MODE=subdomain`:
+
+```bash
+# Acesso via subdomain
+curl -X GET "http://empresa_a.localhost:8080/api/odata/Produtos"
+```
+
+#### 3. Path
+
+Configure `TENANT_IDENTIFICATION_MODE=path`:
+
+```bash
+# Acesso via path
+curl -X GET "http://localhost:8080/api/empresa_a/odata/Produtos"
+```
+
+#### 4. JWT Token
+
+Configure `TENANT_IDENTIFICATION_MODE=jwt` e inclua claim `tenant_id`:
+
+```bash
+# Acesso via JWT (com claim tenant_id)
+curl -X GET "http://localhost:8080/api/odata/Produtos" \
+  -H "Authorization: Bearer <jwt_token_com_tenant_id>"
+```
+
+### Endpoints de Gerenciamento Multi-Tenant
+
+#### Listar Tenants
+
+```bash
+GET /tenants
+```
+
+Resposta:
+```json
+{
+  "multi_tenant": true,
+  "tenants": ["default", "empresa_a", "empresa_b", "empresa_c"],
+  "total_count": 4
+}
+```
+
+#### Estatísticas dos Tenants
+
+```bash
+GET /tenants/stats
+```
+
+Resposta:
+```json
+{
+  "total_tenants": 3,
+  "tenants": {
+    "empresa_a": {
+      "tenant_id": "empresa_a",
+      "exists": true,
+      "provider_type": "*oracle.OracleProvider",
+      "open_connections": 5,
+      "in_use": 2,
+      "idle": 3
+    }
+  }
+}
+```
+
+#### Health Check por Tenant
+
+```bash
+GET /tenants/empresa_a/health
+```
+
+Resposta:
+```json
+{
+  "tenant_id": "empresa_a",
+  "status": "healthy",
+  "connection_stats": {
+    "open_connections": 5,
+    "in_use": 2,
+    "idle": 3
+  }
+}
+```
+
+### Entidades Multi-Tenant
+
+As entidades incluem automaticamente o campo `tenant_id` para isolamento:
+
+```go
+type Produto struct {
+    ID          int64  `json:"id" db:"id" odata:"key"`
+    Nome        string `json:"nome" db:"nome"`
+    Descricao   string `json:"descricao" db:"descricao"`
+    Preco       float64 `json:"preco" db:"preco"`
+    Categoria   string `json:"categoria" db:"categoria"`
+    TenantID    string `json:"tenant_id" db:"tenant_id"`
+}
+
+type Cliente struct {
+    ID       int64  `json:"id" db:"id" odata:"key"`
+    Nome     string `json:"nome" db:"nome"`
+    Email    string `json:"email" db:"email"`
+    Telefone string `json:"telefone" db:"telefone"`
+    TenantID string `json:"tenant_id" db:"tenant_id"`
+}
+```
+
+### Adicionando Novos Tenants
+
+Para adicionar um novo tenant, basta incluir no `.env`:
+
+```env
+TENANT_NOVO_CLIENTE_DB_TYPE=mysql
+TENANT_NOVO_CLIENTE_DB_HOST=mysql.novocliente.com
+TENANT_NOVO_CLIENTE_DB_PORT=3306
+TENANT_NOVO_CLIENTE_DB_NAME=novo_cliente
+TENANT_NOVO_CLIENTE_DB_USER=user
+TENANT_NOVO_CLIENTE_DB_PASSWORD=password
+```
+
+E reiniciar o servidor. O tenant será automaticamente detectado e configurado.
+
+### Vantagens do Multi-Tenant
+
+1. **Isolamento de dados**: Cada tenant tem seu próprio banco de dados
+2. **Escalabilidade**: Adição dinâmica de novos tenants
+3. **Flexibilidade**: Diferentes tipos de banco por tenant
+4. **Monitoramento**: Estatísticas individuais por tenant
+5. **Segurança**: Isolamento completo entre tenants
+6. **Performance**: Pool de conexões otimizado por tenant
+
+### Considerações de Segurança
+
+- **Validação de tenant**: Sempre valide se o tenant existe
+- **Autenticação**: Use JWT com claim `tenant_id` para maior segurança
+- **Auditoria**: Todos os acessos são logados com tenant ID
+- **Isolamento**: Dados são completamente isolados por tenant
+
+### Exemplo Completo
+
+Veja o exemplo completo em [`examples/multi_tenant/`](examples/multi_tenant/) que demonstra:
+
+- Configuração completa multi-tenant
+- Entidades com isolamento por tenant
+- Múltiplos métodos de identificação
+- Endpoints de gerenciamento
+- Monitoramento e health checks
+- Diferentes tipos de banco por tenant
 
 ## 🎯 Eventos de Entidade
 
@@ -846,6 +1378,12 @@ GET /odata/Users
 GET /odata/Users(1)
 ```
 
+#### Listar Entidades com Multi-Tenant
+```
+GET /odata/Users
+X-Tenant-ID: empresa_a
+```
+
 #### Criar Entidade
 ```
 POST /odata/Users
@@ -891,6 +1429,12 @@ DELETE /odata/Users(1)
 GET /odata/Users?$filter=idade gt 25
 GET /odata/Users?$filter=nome eq 'João'
 GET /odata/Users?$filter=contains(nome, 'Silva')
+```
+
+### Filtros com Multi-Tenant
+```
+GET /odata/Users?$filter=idade gt 25
+X-Tenant-ID: empresa_a
 ```
 
 ### Ordenação ($orderby)
@@ -973,7 +1517,7 @@ GET /odata/Users?$search=João
 | `bool` | `Edm.Boolean` | `BOOLEAN` |
 | `time.Time` | `Edm.DateTimeOffset` | `TIMESTAMP` |
 | `nullable.Int64` | `Edm.Int64` | `BIGINT NULL` |
-| `nullable.String` | `Edm.String` | `VARCHAR NULL` |
+| `nullable.String` | `Edm.String` | `VARCHAR NULL`
 | `nullable.Time` | `Edm.DateTimeOffset` | `TIMESTAMP NULL` |
 
 ## 🤝 Contribuindo
@@ -994,6 +1538,44 @@ go test ./...
 ## 📄 Licença
 
 Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
+
+## 📁 Exemplos
+
+O GoData inclui diversos exemplos práticos para demonstrar suas funcionalidades:
+
+### 🏢 [Multi-Tenant](examples/multi_tenant/)
+Exemplo completo demonstrando:
+- Configuração multi-tenant via .env
+- Entidades com isolamento por tenant
+- Múltiplos métodos de identificação de tenant
+- Endpoints de gerenciamento e monitoramento
+- Diferentes tipos de banco por tenant
+
+### 🔐 [JWT Authentication](examples/jwt/)
+Demonstra sistema completo de autenticação:
+- Configuração JWT com roles e scopes
+- Endpoints de login, refresh e logout
+- Controle de acesso por entidade
+- Middleware de autenticação
+
+### 🎯 [Events](examples/events/)
+Sistema completo de eventos:
+- Validações customizadas
+- Auditoria e logging
+- Cancelamento de operações
+- Controle de acesso baseado em contexto
+
+### 📊 [Básico](examples/basic/)
+Exemplo básico de uso:
+- Configuração simples
+- Entidades e relacionamentos
+- Operações CRUD
+
+### 🚀 [Avançado](examples/advanced/)
+Funcionalidades avançadas:
+- Configurações personalizadas
+- Mapeamento complexo
+- Relacionamentos N:N
 
 ## 📞 Suporte
 
