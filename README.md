@@ -19,8 +19,9 @@ Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fib
 - [Operadores Suportados](#-operadores-suportados)
 - [Mapeamento de Tipos](#-mapeamento-de-tipos)
 - [Contribuindo](#-contribuindo)
-- [Licença](#-licença)
 - [Exemplos](#-exemplos)
+- [Referências](#referências)
+- [Licença](#-licença)
 - [Suporte](#-suporte)
 
 ## ✨ Características
@@ -1712,10 +1713,6 @@ Contribuições são bem-vindas! Por favor:
 go test ./...
 ```
 
-## 📄 Licença
-
-Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
-
 ## 📁 Exemplos
 
 O GoData inclui diversos exemplos práticos para demonstrar suas funcionalidades:
@@ -1753,6 +1750,14 @@ Funcionalidades avançadas:
 - Configurações personalizadas
 - Mapeamento complexo
 - Relacionamentos N:N
+
+## Referências
+[![Go Reference](https://pkg.go.dev/badge/github.com/fitlcarlos/godat.svg)](https://pkg.go.dev/github.com/fitlcarlos/godata)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+## 📄 Licença
+
+Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
 ## 📞 Suporte
 
