@@ -1751,7 +1751,7 @@ Funcionalidades avançadas:
 - Mapeamento complexo
 - Relacionamentos N:N
 
-## Referências
+## 📚 Referências
 [![Go Reference](https://pkg.go.dev/badge/github.com/fitlcarlos/godat.svg)](https://pkg.go.dev/github.com/fitlcarlos/godata)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
