@@ -2,6 +2,10 @@ module github.com/fitlcarlos/godata
 
 go 1.24
 
+retract (
+    v1.0.70
+)
+
 require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gofiber/fiber/v3 v3.0.0-beta.4
