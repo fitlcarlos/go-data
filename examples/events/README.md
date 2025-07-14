@@ -276,6 +276,5 @@ log.Printf("Handlers registrados: %+v", subscriptions)
 ## 📚 Referências
 
 - [Documentação Principal](../../README.md#-eventos-de-entidade)
-- [Documentação TMS XData](https://doc.tmssoftware.com/biz/xdata/guide/events.html)
 - [Exemplo JWT](../jwt/README.md)
 - [Exemplo Básico](../basic/README.md) 

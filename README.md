@@ -960,6 +960,21 @@ O GoData oferece um sistema completo de eventos de entidade, permitindo intercep
 
 #### Eventos Específicos por Entidade
 
+Os eventos específicos por entidade se aplicam apenas à entidade nomeada. Estão disponíveis os seguintes métodos:
+
+**Métodos de Eventos Específicos por Entidade:**
+- `OnEntityGet("EntityName", handler)` - Disparado após uma entidade específica ser consultada
+- `OnEntityList("EntityName", handler)` - Disparado após uma coleção de entidades específica ser consultada
+- `OnEntityInserting("EntityName", handler)` - Disparado antes de uma entidade específica ser inserida
+- `OnEntityInserted("EntityName", handler)` - Disparado após uma entidade específica ser inserida
+- `OnEntityModifying("EntityName", handler)` - Disparado antes de uma entidade específica ser atualizada
+- `OnEntityModified("EntityName", handler)` - Disparado após uma entidade específica ser atualizada
+- `OnEntityDeleting("EntityName", handler)` - Disparado antes de uma entidade específica ser excluída
+- `OnEntityDeleted("EntityName", handler)` - Disparado após uma entidade específica ser excluída
+- `OnEntityError("EntityName", handler)` - Disparado quando ocorre erro em uma entidade específica
+
+**Exemplos de uso:**
+
 ```go
 // Validação antes da inserção
 server.OnEntityInserting("Users", func(args odata.EventArgs) error {
@@ -1019,9 +1034,85 @@ server.OnEntityDeleting("Users", func(args odata.EventArgs) error {
     
     return nil
 })
+
+// Ação após exclusão
+server.OnEntityDeleted("Users", func(args odata.EventArgs) error {
+    deletedArgs := args.(*odata.EntityDeletedArgs)
+    
+    // Limpar dados relacionados
+    // cleanupRelatedData(deletedArgs.Keys)
+    
+    log.Printf("Usuário excluído: %+v", deletedArgs.Keys)
+    return nil
+})
+
+// Ação após atualização
+server.OnEntityModified("Users", func(args odata.EventArgs) error {
+    modifiedArgs := args.(*odata.EntityModifiedArgs)
+    
+    // Invalidar cache
+    // invalidateUserCache(modifiedArgs.Keys)
+    
+    log.Printf("Usuário atualizado: %+v", modifiedArgs.UpdatedEntity)
+    return nil
+})
+
+// Auditoria de consultas específicas
+server.OnEntityGet("Users", func(args odata.EventArgs) error {
+    getArgs := args.(*odata.EntityGetArgs)
+    
+    // Log de acesso
+    log.Printf("Usuário consultado: %+v", getArgs.Keys)
+    
+    // Contabilizar acesso
+    // trackUserAccess(getArgs.Keys)
+    
+    return nil
+})
+
+// Auditoria de listagens específicas
+server.OnEntityList("Users", func(args odata.EventArgs) error {
+    listArgs := args.(*odata.EntityListArgs)
+    
+    // Log de listagem
+    log.Printf("Lista de usuários consultada: %d resultados", len(listArgs.Results))
+    
+    // Aplicar filtros adicionais baseados no usuário
+    // applyUserFilters(listArgs)
+    
+    return nil
+})
+
+// Tratamento de erros específicos
+server.OnEntityError("Users", func(args odata.EventArgs) error {
+    errorArgs := args.(*odata.EntityErrorArgs)
+    
+    // Log específico para erros de usuário
+    log.Printf("Erro na entidade Users: %v", errorArgs.Error)
+    
+    // Enviar notificação específica
+    // sendUserErrorNotification(errorArgs.Error)
+    
+    return nil
+})
 ```
 
 #### Eventos Globais
+
+Os eventos globais se aplicam a todas as entidades registradas no servidor. Estão disponíveis os seguintes métodos:
+
+**Métodos de Eventos Globais:**
+- `OnEntityGetGlobal()` - Disparado após qualquer entidade ser consultada
+- `OnEntityListGlobal()` - Disparado após qualquer coleção de entidades ser consultada
+- `OnEntityInsertingGlobal()` - Disparado antes de qualquer entidade ser inserida
+- `OnEntityInsertedGlobal()` - Disparado após qualquer entidade ser inserida
+- `OnEntityModifyingGlobal()` - Disparado antes de qualquer entidade ser atualizada
+- `OnEntityModifiedGlobal()` - Disparado após qualquer entidade ser atualizada
+- `OnEntityDeletingGlobal()` - Disparado antes de qualquer entidade ser excluída
+- `OnEntityDeletedGlobal()` - Disparado após qualquer entidade ser excluída
+- `OnEntityErrorGlobal()` - Disparado quando ocorre erro em qualquer entidade
+
+**Exemplos de uso:**
 
 ```go
 // Auditoria global para todas as inserções
@@ -1053,6 +1144,24 @@ server.OnEntityErrorGlobal(func(args odata.EventArgs) error {
     // Enviar notificação ou alerta
     // errorNotification.Send(errorArgs.Error, errorArgs.Operation)
     
+    return nil
+})
+
+// Auditoria global para todas as consultas
+server.OnEntityGetGlobal(func(args odata.EventArgs) error {
+    log.Printf("Entidade acessada: %s", args.GetEntityName())
+    return nil
+})
+
+// Auditoria global para todas as listagens
+server.OnEntityListGlobal(func(args odata.EventArgs) error {
+    log.Printf("Lista de entidades acessada: %s", args.GetEntityName())
+    return nil
+})
+
+// Auditoria global para todas as exclusões (antes)
+server.OnEntityDeletingGlobal(func(args odata.EventArgs) error {
+    log.Printf("Excluindo entidade: %s", args.GetEntityName())
     return nil
 })
 ```
@@ -1105,6 +1214,46 @@ type EntityListArgs struct {
     TotalCount    int64          // Total de registros
     CustomFilters map[string]interface{} // Filtros customizados
     // Cancelável: true
+}
+```
+
+#### EntityModifiedArgs
+```go
+type EntityModifiedArgs struct {
+    Keys          map[string]interface{} // Chaves da entidade
+    UpdatedEntity interface{}            // Entidade atualizada
+    OriginalEntity interface{}           // Entidade original
+    // Cancelável: false
+}
+```
+
+#### EntityDeletingArgs
+```go
+type EntityDeletingArgs struct {
+    Keys             map[string]interface{} // Chaves da entidade
+    EntityToDelete   interface{}            // Entidade a ser excluída
+    ValidationErrors []string               // Erros de validação
+    // Cancelável: true
+}
+```
+
+#### EntityDeletedArgs
+```go
+type EntityDeletedArgs struct {
+    Keys           map[string]interface{} // Chaves da entidade excluída
+    DeletedEntity  interface{}            // Entidade excluída
+    // Cancelável: false
+}
+```
+
+#### EntityErrorArgs
+```go
+type EntityErrorArgs struct {
+    Error      error       // Erro ocorrido
+    Operation  string      // Operação que causou o erro
+    Keys       map[string]interface{} // Chaves da entidade (se disponível)
+    Data       interface{} // Dados relacionados ao erro
+    // Cancelável: false
 }
 ```
 
@@ -1256,6 +1405,34 @@ server.GetEventManager().ClearEntity("Users")
 
 // Limpar todos os handlers
 server.GetEventManager().Clear()
+```
+
+### Resumo dos Métodos de Eventos
+
+**Eventos Específicos por Entidade:**
+```go
+server.OnEntityGet("EntityName", handler)        // Após consulta individual
+server.OnEntityList("EntityName", handler)       // Após consulta de coleção
+server.OnEntityInserting("EntityName", handler)  // Antes de inserção (cancelável)
+server.OnEntityInserted("EntityName", handler)   // Após inserção
+server.OnEntityModifying("EntityName", handler)  // Antes de atualização (cancelável)
+server.OnEntityModified("EntityName", handler)   // Após atualização
+server.OnEntityDeleting("EntityName", handler)   // Antes de exclusão (cancelável)
+server.OnEntityDeleted("EntityName", handler)    // Após exclusão
+server.OnEntityError("EntityName", handler)      // Quando ocorre erro
+```
+
+**Eventos Globais:**
+```go
+server.OnEntityGetGlobal(handler)        // Após qualquer consulta individual
+server.OnEntityListGlobal(handler)       // Após qualquer consulta de coleção
+server.OnEntityInsertingGlobal(handler)  // Antes de qualquer inserção (cancelável)
+server.OnEntityInsertedGlobal(handler)   // Após qualquer inserção
+server.OnEntityModifyingGlobal(handler)  // Antes de qualquer atualização (cancelável)
+server.OnEntityModifiedGlobal(handler)   // Após qualquer atualização
+server.OnEntityDeletingGlobal(handler)   // Antes de qualquer exclusão (cancelável)
+server.OnEntityDeletedGlobal(handler)    // Após qualquer exclusão
+server.OnEntityErrorGlobal(handler)      // Quando ocorre qualquer erro
 ```
 
 ### Exemplo Completo
