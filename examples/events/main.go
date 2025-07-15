@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/fitlcarlos/godata/pkg/odata"
-	_ "github.com/fitlcarlos/godata/pkg/providers" // Importa providers para registrar factories
+	"github.com/fitlcarlos/go-data/pkg/odata"
+	_ "github.com/fitlcarlos/go-data/pkg/providers" // Importa providers para registrar factories
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/logger"

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fitlcarlos/godata/pkg/odata"
+	"github.com/fitlcarlos/go-data/pkg/odata"
 )
 
 // Registrar factory do PostgreSQL no registry

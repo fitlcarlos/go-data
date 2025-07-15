@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/fitlcarlos/godata/pkg/odata"
+	"github.com/fitlcarlos/go-data/pkg/odata"
 )
 
 // Produto representa um produto no sistema

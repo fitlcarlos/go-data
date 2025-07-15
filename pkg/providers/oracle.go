@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fitlcarlos/godata/pkg/odata"
+	"github.com/fitlcarlos/go-data/pkg/odata"
 	_ "github.com/sijms/go-ora/v2"
 )
 

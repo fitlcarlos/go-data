@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fitlcarlos/godata/pkg/nullable"
+	"github.com/fitlcarlos/go-data/pkg/nullable"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
