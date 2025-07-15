@@ -1,6 +1,8 @@
-# Go-Data - Biblioteca OData para Go
+# Go-Data — OData v4 para APIs RESTful em Go (Golang)
 
-Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fiber v3 embutido e suporte a múltiplos bancos de dados.
+**Go-Data** é uma biblioteca leve e extensível para criação de APIs RESTful baseadas no padrão [OData v4](https://www.odata.org/) usando Go (Golang).  
+Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [Fiber v3](https://github.com/gofiber/fiber), e funciona com múltiplos bancos de dados (PostgreSQL, MySQL, Oracle).
+
 
 ## 📋 Índice
 
