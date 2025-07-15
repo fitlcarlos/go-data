@@ -40,7 +40,7 @@ type Order struct {
 }
 
 func main() {
-	log.Println("=== GoData OData Server - Configurações Avançadas ===")
+	log.Println("=== Go-Data OData Server - Configurações Avançadas ===")
 	log.Println()
 
 	// Cria o servidor (carrega automaticamente configurações do .env se disponível)
@@ -239,7 +239,7 @@ volumes:
 
 Systemd Service Example:
 [Unit]
-Description=GoData OData Server
+Description=Go-Data OData Server
 After=network.target mysql.service
 
 [Service]

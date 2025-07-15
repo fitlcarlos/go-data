@@ -709,7 +709,7 @@ func (s *Server) handleHealth(c fiber.Ctx) error {
 // Server info handler
 func (s *Server) handleServerInfo(c fiber.Ctx) error {
 	info := map[string]interface{}{
-		"name":          "GoData OData Server",
+		"name":          "Go-Data OData Server",
 		"version":       "1.0.0",
 		"odata_version": "4.0",
 		"description":   "Servidor OData v4 completo em Go",

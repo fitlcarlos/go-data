@@ -92,7 +92,7 @@ func (u *UserIdentity) GetCustomClaim(key string) (interface{}, bool) {
 func DefaultJWTConfig() *JWTConfig {
 	return &JWTConfig{
 		SecretKey: "your-secret-key-change-this-in-production",
-		Issuer:    "godata-server",
+		Issuer:    "go-data-server",
 		ExpiresIn: 24 * time.Hour,
 		RefreshIn: 7 * 24 * time.Hour,
 		Algorithm: "HS256",

@@ -1,6 +1,6 @@
 # Exemplo JWT - Autenticação e Autorização
 
-Este exemplo demonstra como implementar autenticação e autorização JWT no GoData OData server.
+Este exemplo demonstra como implementar autenticação e autorização JWT no Go-Data OData server.
 
 ## Recursos Implementados
 

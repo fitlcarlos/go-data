@@ -218,7 +218,7 @@ func (c *EnvConfig) parseVariables() {
 
 	// Configurações JWT
 	c.JWTSecretKey = c.getEnvString("JWT_SECRET_KEY", "")
-	c.JWTIssuer = c.getEnvString("JWT_ISSUER", "godata-server")
+	c.JWTIssuer = c.getEnvString("JWT_ISSUER", "go-data-server")
 	c.JWTExpiresIn = c.getEnvDuration("JWT_EXPIRES_IN", 1*time.Hour)
 	c.JWTRefreshIn = c.getEnvDuration("JWT_REFRESH_IN", 24*time.Hour)
 	c.JWTAlgorithm = c.getEnvString("JWT_ALGORITHM", "HS256")

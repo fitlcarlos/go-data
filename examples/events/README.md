@@ -1,6 +1,6 @@
 # Exemplo de Eventos de Entidade
 
-Este exemplo demonstra como usar o sistema de eventos de entidade do GoData para implementar validações customizadas, auditoria e regras de negócio complexas.
+Este exemplo demonstra como usar o sistema de eventos de entidade do Go-Data para implementar validações customizadas, auditoria e regras de negócio complexas.
 
 ## 📋 Funcionalidades Demonstradas
 

@@ -1,6 +1,6 @@
-# Exemplo Multi-Tenant - GoData OData Server
+# Exemplo Multi-Tenant - Go-Data OData Server
 
-Este exemplo demonstra como configurar e usar o servidor OData GoData com suporte multi-tenant, permitindo que uma única instância do servidor gerencie múltiplos bancos de dados para diferentes tenants.
+Este exemplo demonstra como configurar e usar o servidor OData Go-Data com suporte multi-tenant, permitindo que uma única instância do servidor gerencie múltiplos bancos de dados para diferentes tenants.
 
 ## Características
 

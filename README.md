@@ -1,4 +1,4 @@
-# GoData - Biblioteca OData para Go
+# Go-Data - Biblioteca OData para Go
 
 Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fiber v3 embutido e suporte a múltiplos bancos de dados.
 
@@ -87,12 +87,12 @@ Uma biblioteca Go para implementar APIs OData v4 com resposta JSON, servidor Fib
 ## 🚀 Instalação
 
 ```bash
-go get github.com/fitlcarlos/godata
+go get github.com/fitlcarlos/go-data
 ```
 
 ## 🛠️ Configuração com .env
 
-O GoData suporta configuração automática através de arquivos `.env`, similar ao Spring Boot. O sistema busca automaticamente por arquivos `.env` no diretório atual e diretórios pai.
+O Go-Data suporta configuração automática através de arquivos `.env`, similar ao Spring Boot. O sistema busca automaticamente por arquivos `.env` no diretório atual e diretórios pai.
 
 ### Exemplo de arquivo .env
 
@@ -134,7 +134,7 @@ SERVER_TLS_KEY_FILE=
 # Configurações de JWT
 JWT_ENABLED=false
 JWT_SECRET_KEY=
-JWT_ISSUER=godata-server
+JWT_ISSUER=go-data-server
 JWT_EXPIRES_IN=1h
 JWT_REFRESH_IN=24h
 JWT_ALGORITHM=HS256
@@ -194,7 +194,7 @@ TENANT_EMPRESA_A_DB_PASSWORD=password_a
 #### Configurações JWT
 - **JWT_ENABLED**: Habilita autenticação JWT (padrão: false)
 - **JWT_SECRET_KEY**: Chave secreta para assinatura JWT
-- **JWT_ISSUER**: Emissor do token JWT (padrão: godata-server)
+- **JWT_ISSUER**: Emissor do token JWT (padrão: go-data-server)
 - **JWT_EXPIRES_IN**: Tempo de expiração do token de acesso (padrão: 1h)
 - **JWT_REFRESH_IN**: Tempo de expiração do token de refresh (padrão: 24h)
 - **JWT_ALGORITHM**: Algoritmo de assinatura JWT (padrão: HS256)
@@ -222,7 +222,7 @@ package main
 import (
     "log"
     
-    "github.com/fitlcarlos/godata/pkg/odata"
+    "github.com/fitlcarlos/go-data/pkg/odata"
 )
 
 func main() {
@@ -333,7 +333,7 @@ package main
 import (
     "log"
     
-    "github.com/fitlcarlos/godata/pkg/odata"
+    "github.com/fitlcarlos/go-data/pkg/odata"
 )
 
 // Entidade de exemplo
@@ -364,8 +364,8 @@ import (
     "database/sql"
     "log"
     
-    "github.com/fitlcarlos/godata/pkg/odata"
-    "github.com/fitlcarlos/godata/pkg/providers"
+    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/pkg/providers"
     _ "github.com/go-sql-driver/mysql"
 )
 
@@ -464,12 +464,12 @@ config.CertKeyFile = "server.key"
 
 ## 🔐 Autenticação JWT
 
-O GoData oferece suporte completo à autenticação JWT com controle de acesso granular baseado em roles e scopes.
+O Go-Data oferece suporte completo à autenticação JWT com controle de acesso granular baseado em roles e scopes.
 
 ### Configuração Básica
 
 ```go
-import "github.com/fitlcarlos/godata/pkg/odata"
+import "github.com/fitlcarlos/go-data/pkg/odata"
 
 // Configurar JWT
 jwtConfig := &odata.JWTConfig{
@@ -673,7 +673,7 @@ type EntityAuthConfig struct {
 
 ## 🏢 Multi-Tenant
 
-O GoData oferece suporte completo a multi-tenant, permitindo que uma única instância do servidor gerencie múltiplos bancos de dados para diferentes tenants (clientes, organizações, etc.). Cada tenant mantém isolamento completo dos dados.
+O Go-Data oferece suporte completo a multi-tenant, permitindo que uma única instância do servidor gerencie múltiplos bancos de dados para diferentes tenants (clientes, organizações, etc.). Cada tenant mantém isolamento completo dos dados.
 
 ### Características Multi-Tenant
 
@@ -740,7 +740,7 @@ package main
 import (
     "log"
     
-    "github.com/fitlcarlos/godata/pkg/odata"
+    "github.com/fitlcarlos/go-data/pkg/odata"
 )
 
 func main() {
@@ -934,7 +934,7 @@ Veja o exemplo completo em [`examples/multi_tenant/`](examples/multi_tenant/) qu
 
 ## 🎯 Eventos de Entidade
 
-O GoData oferece um sistema completo de eventos de entidade, permitindo interceptar e customizar operações CRUD através de handlers de eventos. Este sistema é ideal para implementar validações customizadas, auditoria, log de atividades e regras de negócio complexas.
+O Go-Data oferece um sistema completo de eventos de entidade, permitindo interceptar e customizar operações CRUD através de handlers de eventos. Este sistema é ideal para implementar validações customizadas, auditoria, log de atividades e regras de negócio complexas.
 
 ### Tipos de Eventos Disponíveis
 
@@ -1486,7 +1486,7 @@ Orders []Order `cascade:"[SaveUpdate, Remove, Refresh]"`
 ### Tipos Nullable
 
 ```go
-import "github.com/fitlcarlos/godata/pkg/nullable"
+import "github.com/fitlcarlos/go-data/pkg/nullable"
 
 type User struct {
     ID      int64           `json:"id"`
@@ -1502,7 +1502,7 @@ type User struct {
 ### PostgreSQL
 ```go
 import (
-    "github.com/fitlcarlos/godata/pkg/providers"
+    "github.com/fitlcarlos/go-data/pkg/providers"
     _ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -1513,7 +1513,7 @@ provider := providers.NewPostgreSQLProvider(db)
 ### Oracle
 ```go
 import (
-    "github.com/fitlcarlos/godata/pkg/providers"
+    "github.com/fitlcarlos/go-data/pkg/providers"
     _ "github.com/sijms/go-ora/v2"
 )
 
@@ -1524,7 +1524,7 @@ provider := providers.NewOracleProvider(db)
 ### MySQL
 ```go
 import (
-    "github.com/fitlcarlos/godata/pkg/providers"
+    "github.com/fitlcarlos/go-data/pkg/providers"
     _ "github.com/go-sql-driver/mysql"
 )
 
@@ -1715,7 +1715,7 @@ go test ./...
 
 ## 📁 Exemplos
 
-O GoData inclui diversos exemplos práticos para demonstrar suas funcionalidades:
+O Go-Data inclui diversos exemplos práticos para demonstrar suas funcionalidades:
 
 ### 🏢 [Multi-Tenant](examples/multi_tenant/)
 Exemplo completo demonstrando:
@@ -1752,7 +1752,7 @@ Funcionalidades avançadas:
 - Relacionamentos N:N
 
 ## 📚 Referências
-[![Go Reference](https://pkg.go.dev/badge/github.com/fitlcarlos/godat.svg)](https://pkg.go.dev/github.com/fitlcarlos/godata)
+[![Go Reference](https://pkg.go.dev/badge/github.com/fitlcarlos/godat.svg)](https://pkg.go.dev/github.com/fitlcarlos/go-data)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 📄 Licença
@@ -1761,7 +1761,7 @@ Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICE
 
 ## 📞 Suporte
 
-- [GitHub Issues](https://github.com/fitlcarlos/godata/issues) - Para bugs e feature requests
-- [GitHub Discussions](https://github.com/fitlcarlos/godata/discussions) - Para perguntas e discussões
+- [GitHub Issues](https://github.com/fitlcarlos/go-data/issues) - Para bugs e feature requests
+- [GitHub Discussions](https://github.com/fitlcarlos/go-data/discussions) - Para perguntas e discussões
 
 ---
