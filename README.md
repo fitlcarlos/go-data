@@ -1754,7 +1754,7 @@ Funcionalidades avançadas:
 - Relacionamentos N:N
 
 ## 📚 Referências
-[![Go Reference](https://pkg.go.dev/badge/github.com/fitlcarlos/godat.svg)](https://pkg.go.dev/github.com/fitlcarlos/go-data)
+[![Go Reference](https://pkg.go.dev/badge/github.com/fitlcarlos/go-data.svg)](https://pkg.go.dev/github.com/fitlcarlos/go-data)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 📄 Licença
