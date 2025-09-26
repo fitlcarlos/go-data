@@ -12,6 +12,7 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - [Exemplo de Uso](#-exemplo-de-uso)
 - [Configuração do Servidor](#-configuração-do-servidor)
 - [Autenticação JWT](#-autenticação-jwt)
+- [Rate Limiting](#-rate-limiting)
 - [Multi-Tenant](#-multi-tenant)
 - [Eventos de Entidade](#-eventos-de-entidade)
 - [Mapeamento de Entidades](#-mapeamento-de-entidades)
@@ -71,6 +72,15 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - Privilégios de administrador
 - Configuração de autenticação por entidade
 - Entidades somente leitura
+
+### 🛡️ **Rate Limiting**
+- Controle de taxa de requisições por IP, usuário ou API key
+- Configuração flexível de limites e janelas de tempo
+- Headers informativos de rate limit nas respostas
+- Estratégias customizáveis de geração de chaves
+- Suporte a burst de requisições simultâneas
+- Limpeza automática de clientes inativos
+- Integração transparente com middleware do servidor
 
 ### 🏢 **Multi-Tenant**
 - Suporte completo a multi-tenant com isolamento de dados
@@ -691,6 +701,206 @@ type EntityAuthConfig struct {
     ReadOnly       bool     // Entidade somente leitura
 }
 ```
+
+## 🛡️ Rate Limiting
+
+O Go-Data implementa um sistema robusto de rate limiting para proteger suas APIs contra abuso e garantir disponibilidade. O sistema oferece controle granular de taxa de requisições com múltiplas estratégias de identificação de clientes.
+
+### Características do Rate Limiting
+
+- **Controle de taxa** por IP, usuário autenticado, API key ou tenant
+- **Configuração flexível** de limites e janelas de tempo
+- **Headers informativos** nas respostas HTTP
+- **Estratégias customizáveis** de geração de chaves
+- **Suporte a burst** de requisições simultâneas
+- **Limpeza automática** de clientes inativos
+- **Integração transparente** com middleware do servidor
+
+### Configuração via .env
+
+```env
+# Habilitar rate limiting
+RATE_LIMIT_ENABLED=true
+
+# 100 requisições por minuto por cliente
+RATE_LIMIT_REQUESTS_PER_MINUTE=100
+
+# Permite burst de até 20 requisições simultâneas
+RATE_LIMIT_BURST_SIZE=20
+
+# Janela de tempo para contagem (1 minuto)
+RATE_LIMIT_WINDOW_SIZE=1m
+
+# Incluir headers de rate limit na resposta
+RATE_LIMIT_HEADERS=true
+```
+
+### Configuração Programática
+
+```go
+import "github.com/fitlcarlos/go-data/pkg/odata"
+
+// Configuração básica de rate limit
+rateLimitConfig := &odata.RateLimitConfig{
+    Enabled:           true,
+    RequestsPerMinute: 100,
+    BurstSize:         20,
+    WindowSize:        time.Minute,
+    KeyGenerator:      odata.defaultKeyGenerator, // Por IP
+    Headers:           true,
+}
+
+// Configurar servidor com rate limit
+config := odata.DefaultServerConfig()
+config.RateLimitConfig = rateLimitConfig
+
+server := odata.NewServerWithConfig(provider, config)
+```
+
+### Estratégias de Rate Limiting
+
+#### 1. Por IP (Padrão)
+
+```go
+// Limita por endereço IP do cliente
+rateLimitConfig.KeyGenerator = odata.defaultKeyGenerator
+```
+
+#### 2. Por Usuário Autenticado
+
+```go
+// Limita por usuário autenticado (JWT)
+rateLimitConfig.KeyGenerator = odata.UserBasedKeyGenerator
+```
+
+#### 3. Por API Key
+
+```go
+// Limita por chave de API
+rateLimitConfig.KeyGenerator = odata.APIKeyBasedKeyGenerator
+```
+
+#### 4. Por Tenant (Multi-Tenant)
+
+```go
+// Limita por tenant em ambiente multi-tenant
+rateLimitConfig.KeyGenerator = odata.TenantBasedKeyGenerator
+```
+
+#### 5. Estratégia Customizada
+
+```go
+// Implementar estratégia personalizada
+rateLimitConfig.KeyGenerator = func(c fiber.Ctx) string {
+    // Sua lógica customizada
+    userID := c.Locals("user_id")
+    ip := c.IP()
+    return fmt.Sprintf("custom:%v:%s", userID, ip)
+}
+```
+
+### Headers de Resposta
+
+Quando habilitado, o sistema inclui headers informativos:
+
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1642678800
+X-RateLimit-Retry-After: 30 (apenas quando bloqueado)
+```
+
+### Resposta de Rate Limit Excedido
+
+Quando o limite é excedido, o servidor retorna HTTP 429:
+
+```json
+{
+  "error": {
+    "code": "RateLimitExceeded",
+    "message": "Rate limit exceeded. Try again in 30 seconds.",
+    "target": "rate_limit"
+  }
+}
+```
+
+### Configuração Avançada
+
+```go
+// Configuração avançada com múltiplas estratégias
+rateLimitConfig := &odata.RateLimitConfig{
+    Enabled:           true,
+    RequestsPerMinute: 200,
+    BurstSize:         50,
+    WindowSize:        2 * time.Minute,
+    KeyGenerator:      odata.UserBasedKeyGenerator,
+    SkipSuccessful:    false, // Contar requisições bem-sucedidas
+    SkipFailed:        false, // Contar requisições com falha
+    Headers:           true,
+}
+
+// Aplicar configuração em runtime
+server.SetRateLimitConfig(rateLimitConfig)
+```
+
+### Monitoramento e Métricas
+
+```go
+// Obter configuração atual
+currentConfig := server.GetRateLimitConfig()
+if currentConfig != nil {
+    log.Printf("Rate limit ativo: %d req/min", 
+        currentConfig.RequestsPerMinute)
+}
+```
+
+### Exemplo Prático
+
+```go
+package main
+
+import (
+    "log"
+    "time"
+    
+    "github.com/fitlcarlos/go-data/pkg/odata"
+    _ "github.com/fitlcarlos/go-data/pkg/providers"
+)
+
+func main() {
+    // Configurar rate limit
+    rateLimitConfig := &odata.RateLimitConfig{
+        Enabled:           true,
+        RequestsPerMinute: 60,  // 1 requisição por segundo
+        BurstSize:         10,  // Permite 10 requisições simultâneas
+        WindowSize:        time.Minute,
+        KeyGenerator:      odata.defaultKeyGenerator,
+        Headers:           true,
+    }
+    
+    // Configurar servidor
+    config := odata.DefaultServerConfig()
+    config.RateLimitConfig = rateLimitConfig
+    
+    server := odata.NewServerWithConfig(nil, config)
+    
+    // Registrar entidades
+    server.RegisterEntity("Users", User{})
+    
+    // Iniciar servidor
+    if err := server.Start(); err != nil {
+        log.Fatalf("Erro ao iniciar servidor: %v", err)
+    }
+}
+```
+
+### Boas Práticas
+
+1. **Configure limites apropriados** baseados na capacidade do seu sistema
+2. **Use burst size** para permitir picos de tráfego legítimos
+3. **Monitore headers** para ajustar limites conforme necessário
+4. **Implemente estratégias diferentes** para diferentes tipos de clientes
+5. **Teste em ambiente de produção** para validar configurações
 
 ## 🏢 Multi-Tenant
 
