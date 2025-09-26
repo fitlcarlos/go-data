@@ -74,6 +74,9 @@ type ServerConfig struct {
 	EnableJWT   bool
 	JWTConfig   *JWTConfig
 	RequireAuth bool // Se true, todas as rotas requerem autenticação por padrão
+
+	// Configurações de Rate Limit
+	RateLimitConfig *RateLimitConfig
 }
 
 // DefaultServerConfig retorna uma configuração padrão do servidor
@@ -116,6 +119,7 @@ type Server struct {
 	jwtService        *JWTService
 	entityAuth        map[string]EntityAuthConfig // Configurações de autenticação por entidade
 	eventManager      *EntityEventManager         // Gerenciador de eventos de entidade
+	rateLimiter       *RateLimiter                // Rate limiter
 
 	// Campos para gerenciamento de serviço
 	serviceLogger service.Logger
@@ -239,6 +243,13 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 		server.logger.Printf("JWT habilitado com issuer: %s", config.JWTConfig.Issuer)
 	}
 
+	// Configurar Rate Limit se habilitado
+	if config.RateLimitConfig != nil && config.RateLimitConfig.Enabled {
+		server.rateLimiter = NewRateLimiter(config.RateLimitConfig)
+		server.logger.Printf("Rate limit habilitado: %d req/min, burst: %d", 
+			config.RateLimitConfig.RequestsPerMinute, config.RateLimitConfig.BurstSize)
+	}
+
 	// Configurar middleware apenas se habilitado
 	if config.EnableCORS {
 		server.router.Use(cors.New(cors.Config{
@@ -258,6 +269,11 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 
 	// Middleware de recovery sempre ativo para segurança
 	server.router.Use(fiberrecover.New())
+
+	// Middleware de rate limit se habilitado
+	if server.rateLimiter != nil {
+		server.router.Use(server.RateLimitMiddleware())
+	}
 
 	server.setupBaseRoutes()
 
@@ -291,6 +307,11 @@ func (s *Server) setupMultiTenantMiddlewares() {
 	}
 
 	s.router.Use(fiberrecover.New())
+
+	// Middleware de rate limit se habilitado
+	if s.rateLimiter != nil {
+		s.router.Use(s.RateLimitMiddleware())
+	}
 }
 
 // setupBaseRoutes configura as rotas básicas do servidor

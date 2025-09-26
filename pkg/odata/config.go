@@ -79,6 +79,13 @@ type EnvConfig struct {
 	ServiceDisplayName string
 	ServiceDescription string
 
+	// Configurações de Rate Limit
+	RateLimitEnabled           bool
+	RateLimitRequestsPerMinute int
+	RateLimitBurstSize         int
+	RateLimitWindowSize        time.Duration
+	RateLimitHeaders           bool
+
 	// Mapa de todas as variáveis para acesso direto
 	Variables map[string]string
 }
@@ -230,6 +237,13 @@ func (c *EnvConfig) parseVariables() {
 	c.ServiceName = c.getEnvString("SERVICE_NAME", "godata-service")
 	c.ServiceDisplayName = c.getEnvString("SERVICE_DISPLAY_NAME", "GoData OData Service")
 	c.ServiceDescription = c.getEnvString("SERVICE_DESCRIPTION", "Serviço GoData OData v4 para APIs RESTful")
+
+	// Configurações de Rate Limit
+	c.RateLimitEnabled = c.getEnvBool("RATE_LIMIT_ENABLED", false)
+	c.RateLimitRequestsPerMinute = c.getEnvInt("RATE_LIMIT_REQUESTS_PER_MINUTE", 60)
+	c.RateLimitBurstSize = c.getEnvInt("RATE_LIMIT_BURST_SIZE", 10)
+	c.RateLimitWindowSize = c.getEnvDuration("RATE_LIMIT_WINDOW_SIZE", time.Minute)
+	c.RateLimitHeaders = c.getEnvBool("RATE_LIMIT_HEADERS", true)
 }
 
 // getEnvString retorna uma string do ambiente ou valor padrão
@@ -349,6 +363,18 @@ func (c *EnvConfig) ToServerConfig() *ServerConfig {
 			ExpiresIn: c.JWTExpiresIn,
 			RefreshIn: c.JWTRefreshIn,
 			Algorithm: c.JWTAlgorithm,
+		}
+	}
+
+	// Configurações de Rate Limit
+	if c.RateLimitEnabled {
+		config.RateLimitConfig = &RateLimitConfig{
+			Enabled:           c.RateLimitEnabled,
+			RequestsPerMinute: c.RateLimitRequestsPerMinute,
+			BurstSize:         c.RateLimitBurstSize,
+			WindowSize:        c.RateLimitWindowSize,
+			KeyGenerator:      defaultKeyGenerator,
+			Headers:           c.RateLimitHeaders,
 		}
 	}
 
