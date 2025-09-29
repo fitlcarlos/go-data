@@ -3,6 +3,7 @@ package odata
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/url"
@@ -246,7 +247,7 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 	// Configurar Rate Limit se habilitado
 	if config.RateLimitConfig != nil && config.RateLimitConfig.Enabled {
 		server.rateLimiter = NewRateLimiter(config.RateLimitConfig)
-		server.logger.Printf("Rate limit habilitado: %d req/min, burst: %d", 
+		server.logger.Printf("Rate limit habilitado: %d req/min, burst: %d",
 			config.RateLimitConfig.RequestsPerMinute, config.RateLimitConfig.BurstSize)
 	}
 
@@ -270,6 +271,9 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 	// Middleware de recovery sempre ativo para segurança
 	server.router.Use(fiberrecover.New())
 
+	// Middleware de conexão de banco de dados (transparente)
+	server.router.Use(server.DatabaseMiddleware())
+
 	// Middleware de rate limit se habilitado
 	if server.rateLimiter != nil {
 		server.router.Use(server.RateLimitMiddleware())
@@ -287,6 +291,9 @@ func (s *Server) setupMultiTenantMiddlewares() {
 
 	// Middleware de informações do tenant
 	s.router.Use(s.TenantInfo())
+
+	// Middleware de conexão de banco de dados (transparente)
+	s.router.Use(s.DatabaseMiddleware())
 
 	// Demais middlewares...
 	if s.config.EnableCORS {
@@ -1956,4 +1963,35 @@ func (s *Server) createServiceConfig() *service.Config {
 	}
 
 	return svcConfig
+}
+
+// DatabaseMiddleware middleware transparente para obter conexão de banco de dados
+func (s *Server) DatabaseMiddleware() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		// Obter provider (já existe a lógica)
+		provider := s.getCurrentProvider(c)
+		if provider != nil {
+			// Obter conexão do pool
+			if conn := provider.GetConnection(); conn != nil {
+				// Armazenar conexão no contexto
+				c.Locals("db_conn", conn)
+
+				// Garantir fechamento da conexão ao final da requisição
+				defer func() {
+					// A conexão será fechada automaticamente pelo pool
+					// quando não estiver mais em uso
+				}()
+			}
+		}
+
+		return c.Next()
+	}
+}
+
+// GetDBFromContext obtém a conexão de banco de dados do contexto
+func GetDBFromContext(c fiber.Ctx) *sql.DB {
+	if conn, ok := c.Locals("db_conn").(*sql.DB); ok {
+		return conn
+	}
+	return nil
 }

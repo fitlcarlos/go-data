@@ -72,8 +72,8 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - Privilégios de administrador
 - Configuração de autenticação por entidade
 - Entidades somente leitura
-
-### 🛡️ **Rate Limiting**
+    
+### 🛡️ **Rage Limiting**
 - Controle de taxa de requisições por IP, usuário ou API key
 - Configuração flexível de limites e janelas de tempo
 - Headers informativos de rate limit nas respostas
@@ -160,6 +160,13 @@ JWT_EXPIRES_IN=1h
 JWT_REFRESH_IN=24h
 JWT_ALGORITHM=HS256
 JWT_REQUIRE_AUTH=false
+
+# Configurações de Rate Limit
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS_PER_MINUTE=100
+RATE_LIMIT_BURST_SIZE=20
+RATE_LIMIT_WINDOW_SIZE=1m
+RATE_LIMIT_HEADERS=true
 
 # Configurações do Serviço
 SERVICE_NAME=godata-service
@@ -702,7 +709,7 @@ type EntityAuthConfig struct {
 }
 ```
 
-## 🛡️ Rate Limiting
+## 🛡️ Rate Limitingg
 
 O Go-Data implementa um sistema robusto de rate limiting para proteger suas APIs contra abuso e garantir disponibilidade. O sistema oferece controle granular de taxa de requisições com múltiplas estratégias de identificação de clientes.
 
