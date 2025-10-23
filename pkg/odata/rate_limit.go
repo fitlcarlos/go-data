@@ -23,12 +23,14 @@ type RateLimitConfig struct {
 }
 
 // DefaultRateLimitConfig retorna uma configuração padrão de rate limit
+// NOTA: Rate limiting está HABILITADO por padrão para proteção contra abuso.
+// Para desabilitar, defina Enabled = false na configuração.
 func DefaultRateLimitConfig() *RateLimitConfig {
 	return &RateLimitConfig{
-		Enabled:           false,
-		RequestsPerMinute: 60,
-		BurstSize:         10,
-		WindowSize:        time.Minute,
+		Enabled:           true, // ⚠️ HABILITADO POR PADRÃO para segurança
+		RequestsPerMinute: DefaultRateLimitPerMinute,
+		BurstSize:         DefaultRateLimitBurstSize,
+		WindowSize:        DefaultRateLimitWindow,
 		KeyGenerator:      defaultKeyGenerator,
 		SkipSuccessful:    false,
 		SkipFailed:        false,
@@ -140,6 +142,18 @@ func (rl *RateLimiter) Allow(key string) (bool, RateLimitInfo) {
 
 	// Verifica se pode fazer nova requisição
 	if len(client.requests) >= rl.config.RequestsPerMinute {
+		// Se o limite é 0, bloqueia imediatamente sem tentar acessar requests[0]
+		if rl.config.RequestsPerMinute == 0 || len(client.requests) == 0 {
+			info := RateLimitInfo{
+				Allowed:    false,
+				Limit:      rl.config.RequestsPerMinute,
+				Remaining:  0,
+				ResetTime:  now.Add(rl.config.WindowSize),
+				RetryAfter: int(rl.config.WindowSize.Seconds()),
+			}
+			return false, info
+		}
+
 		// Calcula quando a próxima requisição será permitida
 		oldestRequest := client.requests[0]
 		resetTime := oldestRequest.Add(rl.config.WindowSize)

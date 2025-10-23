@@ -94,6 +94,32 @@ func setupUserEvents(server *odata.Server) {
 
 		log.Printf("✅ [Users] Usuário inserido com sucesso: %+v", insertedArgs.CreatedEntity)
 
+		// Usando ObjectManager nos eventos
+		manager := args.Manager() // ATALHO direto
+		if manager != nil {
+			log.Printf("🔧 ObjectManager disponível, executando lógica complexa...")
+
+			// Exemplo: buscar estatísticas usando cache
+			if !manager.IsCached("Stats", "user_count") {
+				log.Printf("📊 Buscando estatísticas de usuários...")
+				stats, err := manager.Find("Stats", "user_count")
+				if err == nil {
+					log.Printf("📈 Estatísticas encontradas: %v", stats)
+					// Atualizar estatísticas de usuários
+					manager.Update(stats)
+					manager.Flush(stats) // Flush específico
+				}
+			} else {
+				log.Printf("⚡ Estatísticas já em cache, pulando query")
+			}
+
+			// Exemplo: verificar mudanças pendentes
+			if manager.HasAnyChanges() {
+				changedCount := len(manager.GetChangedObjects())
+				log.Printf("🔄 Há %d objetos com mudanças pendentes", changedCount)
+			}
+		}
+
 		// Aqui você poderia enviar um email de boas-vindas, criar auditoria, etc.
 		// sendWelcomeEmail(insertedArgs.CreatedEntity)
 
@@ -230,6 +256,28 @@ func setupGlobalEvents(server *odata.Server) {
 		errorArgs := args.(*odata.EntityErrorArgs)
 
 		log.Printf("❌ [GLOBAL] Erro na entidade %s: %v", args.GetEntityName(), errorArgs.Error)
+
+		// Usando ObjectManager para operações de erro/resposta
+		manager := args.Manager()
+		if manager != nil {
+			log.Printf("🔧 Executando operações de recuperação com ObjectManager...")
+
+			// Exemplo: usar transação para operações de rollback/cleanup
+			err := manager.WithTransaction(func(tx *odata.TxManager) error {
+				// Operações de cleanup ou recovery
+				log.Printf("🔄 Executando cleanup dentro de transação")
+
+				// Aqui seria possível fazer operações relacionadas
+				// que precisam ser atômicas em caso de erro
+				return nil
+			})
+
+			if err != nil {
+				log.Printf("❌ Erro na operação de recuperação: %v", err)
+			} else {
+				log.Printf("✅ Operação de recuperação concluída")
+			}
+		}
 
 		// Aqui você poderia enviar notificações, logs detalhados, etc.
 		// errorNotification.Send(errorArgs.Error, errorArgs.Operation)

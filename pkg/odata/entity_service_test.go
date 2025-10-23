@@ -75,6 +75,11 @@ func (p *MockDatabaseProvider) GetDriverName() string {
 	return "mock"
 }
 
+func (p *MockDatabaseProvider) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	// Mock: retorna nil, testes não usam transações reais
+	return nil, nil
+}
+
 func (p *MockDatabaseProvider) Close() error {
 	return nil
 }

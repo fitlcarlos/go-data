@@ -55,29 +55,20 @@ func (na *NamedArgs) GetNamedArgs() []interface{} {
 
 // QueryBuilder constrói queries SQL a partir de árvores de parse OData
 type QueryBuilder struct {
-	dialect    string
+	dialect    SQLDialect
 	nodeMap    NodeMap
 	prepareMap PrepareMap
 }
 
 // NewQueryBuilder cria um novo QueryBuilder para o dialeto especificado
-func NewQueryBuilder(dialect string) *QueryBuilder {
-	qb := &QueryBuilder{
-		dialect:    strings.ToLower(dialect),
-		nodeMap:    make(NodeMap),
-		prepareMap: make(PrepareMap),
-	}
+func NewQueryBuilder(dialectName string) *QueryBuilder {
+	// Obtém o dialect específico
+	dialect := GetDialect(strings.ToLower(dialectName))
 
-	// Configura os mapas baseado no dialeto
-	switch qb.dialect {
-	case "mysql":
-		qb.setupMySQLMaps()
-	case "postgresql":
-		qb.setupPostgreSQLMaps()
-	case "oracle":
-		qb.setupOracleMaps()
-	default:
-		qb.setupDefaultMaps()
+	qb := &QueryBuilder{
+		dialect:    dialect,
+		nodeMap:    dialect.SetupNodeMap(),
+		prepareMap: dialect.SetupPrepareMap(),
 	}
 
 	// Verifica se o nodeMap foi inicializado corretamente
@@ -92,105 +83,13 @@ func NewQueryBuilder(dialect string) *QueryBuilder {
 	return qb
 }
 
-// setupDefaultMaps configura mapas padrão
-func (qb *QueryBuilder) setupDefaultMaps() {
-	// Operadores de comparação
-	qb.nodeMap["eq"] = "(%s = %s)"
-	qb.nodeMap["ne"] = "(%s != %s)"
-	qb.nodeMap["gt"] = "(%s > %s)"
-	qb.nodeMap["ge"] = "(%s >= %s)"
-	qb.nodeMap["lt"] = "(%s < %s)"
-	qb.nodeMap["le"] = "(%s <= %s)"
-
-	// Operadores lógicos
-	qb.nodeMap["and"] = "(%s AND %s)"
-	qb.nodeMap["or"] = "(%s OR %s)"
-	qb.nodeMap["not"] = "(NOT %s)"
-
-	// Operadores aritméticos
-	qb.nodeMap["add"] = "(%s + %s)"
-	qb.nodeMap["sub"] = "(%s - %s)"
-	qb.nodeMap["mul"] = "(%s * %s)"
-	qb.nodeMap["div"] = "(%s / %s)"
-	qb.nodeMap["mod"] = "(%s %% %s)"
-
-	// Funções de string
-	qb.nodeMap["contains"] = "(%s LIKE %s)"
-	qb.nodeMap["startswith"] = "(%s LIKE %s)"
-	qb.nodeMap["endswith"] = "(%s LIKE %s)"
-	qb.nodeMap["length"] = "LENGTH(%s)"
-	qb.nodeMap["indexof"] = "LOCATE(%s, %s)"
-	qb.nodeMap["substring"] = "SUBSTRING(%s, %s, %s)"
-	qb.nodeMap["tolower"] = "LOWER(%s)"
-	qb.nodeMap["toupper"] = "UPPER(%s)"
-	qb.nodeMap["trim"] = "TRIM(%s)"
-	qb.nodeMap["concat"] = "CONCAT(%s, %s)"
-
-	// Funções de data/hora
-	qb.nodeMap["year"] = "YEAR(%s)"
-	qb.nodeMap["month"] = "MONTH(%s)"
-	qb.nodeMap["day"] = "DAY(%s)"
-	qb.nodeMap["hour"] = "HOUR(%s)"
-	qb.nodeMap["minute"] = "MINUTE(%s)"
-	qb.nodeMap["second"] = "SECOND(%s)"
-	qb.nodeMap["now"] = "NOW()"
-	qb.nodeMap["date"] = "DATE(%s)"
-	qb.nodeMap["time"] = "TIME(%s)"
-
-	// Funções matemáticas
-	qb.nodeMap["round"] = "ROUND(%s)"
-	qb.nodeMap["floor"] = "FLOOR(%s)"
-	qb.nodeMap["ceiling"] = "CEIL(%s)"
-
-	// Valores especiais
-	qb.nodeMap["null"] = "NULL"
-
-	// Prepare maps para LIKE
-	qb.prepareMap["contains"] = "%%%s%%"
-	qb.prepareMap["startswith"] = "%s%%"
-	qb.prepareMap["endswith"] = "%%%s"
-}
-
-// setupMySQLMaps configura mapas para MySQL
-func (qb *QueryBuilder) setupMySQLMaps() {
-	qb.setupDefaultMaps() // Usa Default como padrão
-}
-
-// setupPostgreSQLMaps configura mapas para PostgreSQL
-func (qb *QueryBuilder) setupPostgreSQLMaps() {
-	// Herda configuração Default e sobrescreve diferenças
-	qb.setupDefaultMaps()
-
-	// Diferenças específicas do PostgreSQL
-	qb.nodeMap["mod"] = "(%s %% %s)"
-	qb.nodeMap["indexof"] = "POSITION(%s IN %s)"
-	qb.nodeMap["ceiling"] = "CEILING(%s)"
-	qb.nodeMap["contains"] = "(%s ILIKE %s)" // Case insensitive
-	qb.nodeMap["startswith"] = "(%s ILIKE %s)"
-	qb.nodeMap["endswith"] = "(%s ILIKE %s)"
-}
-
-// setupOracleMaps configura mapas para Oracle
-func (qb *QueryBuilder) setupOracleMaps() {
-	// Herda configuração Default e sobrescreve diferenças
-	qb.setupDefaultMaps()
-
-	// Diferenças específicas do Oracle
-	qb.nodeMap["mod"] = "MOD(%s, %s)"
-	qb.nodeMap["indexof"] = "INSTR(%s, %s)"
-	qb.nodeMap["substring"] = "SUBSTR(%s, %s, %s)"
-	qb.nodeMap["now"] = "SYSDATE"
-	qb.nodeMap["ceiling"] = "CEIL(%s)"
-	qb.nodeMap["length"] = "LENGTH(%s)"
-}
-
 // BuildWhereClause constrói cláusula WHERE a partir de árvore de parse
 func (qb *QueryBuilder) BuildWhereClause(ctx context.Context, tree *ParseNode, metadata EntityMetadata) (string, []interface{}, error) {
 	if tree == nil {
 		return "", []interface{}{}, nil
 	}
 
-	namedArgs := NewNamedArgs(qb.dialect)
+	namedArgs := NewNamedArgs(qb.dialect.GetName())
 	sql, err := qb.buildNodeExpressionNamed(ctx, tree, metadata, namedArgs)
 	if err != nil {
 		return "", nil, err
@@ -659,25 +558,7 @@ func (qb *QueryBuilder) convertValueToPropertyType(value interface{}, propertyNa
 
 // BuildLimitClause constrói cláusula LIMIT/OFFSET
 func (qb *QueryBuilder) BuildLimitClause(top, skip int) string {
-	switch strings.ToLower(qb.dialect) {
-	case "mysql", "postgresql":
-		if top > 0 && skip > 0 {
-			return fmt.Sprintf("LIMIT %d OFFSET %d", top, skip)
-		} else if top > 0 {
-			return fmt.Sprintf("LIMIT %d", top)
-		} else if skip > 0 {
-			return fmt.Sprintf("OFFSET %d", skip)
-		}
-	case "oracle":
-		if top > 0 && skip > 0 {
-			return fmt.Sprintf("OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", skip, top)
-		} else if top > 0 {
-			return fmt.Sprintf("FETCH FIRST %d ROWS ONLY", top)
-		} else if skip > 0 {
-			return fmt.Sprintf("OFFSET %d ROWS", skip)
-		}
-	}
-	return ""
+	return qb.dialect.BuildLimitClause(top, skip)
 }
 
 // BuildCompleteQuery constrói query SQL completa
@@ -865,17 +746,8 @@ func (qb *QueryBuilder) buildComputeFunction(ctx context.Context, node *ParseNod
 		}
 		params = append(params, argParams...)
 
-		// Mapeia para função específica do banco
-		switch qb.dialect {
-		case "mysql":
-			return fmt.Sprintf("CEILING(%s)", argSQL), params, nil
-		case "postgresql":
-			return fmt.Sprintf("CEIL(%s)", argSQL), params, nil
-		case "oracle":
-			return fmt.Sprintf("CEIL(%s)", argSQL), params, nil
-		default:
-			return fmt.Sprintf("CEILING(%s)", argSQL), params, nil
-		}
+		// Usa o dialect para construir a função
+		return qb.dialect.BuildCeilingFunction(argSQL), params, nil
 
 	case "abs":
 		if len(node.Children) != 1 {
@@ -970,17 +842,8 @@ func (qb *QueryBuilder) buildComputeFunction(ctx context.Context, node *ParseNod
 			params = append(params, argParams...)
 		}
 
-		// Mapeia para função específica do banco
-		switch qb.dialect {
-		case "mysql":
-			return fmt.Sprintf("CONCAT(%s)", strings.Join(argSQLs, ", ")), params, nil
-		case "postgresql":
-			return fmt.Sprintf("CONCAT(%s)", strings.Join(argSQLs, ", ")), params, nil
-		case "oracle":
-			return strings.Join(argSQLs, " || "), params, nil
-		default:
-			return fmt.Sprintf("CONCAT(%s)", strings.Join(argSQLs, ", ")), params, nil
-		}
+		// Usa o dialect para construir a função
+		return qb.dialect.BuildConcatFunction(argSQLs), params, nil
 
 	case "substring":
 		if len(node.Children) < 2 || len(node.Children) > 3 {
@@ -1006,29 +869,11 @@ func (qb *QueryBuilder) buildComputeFunction(ctx context.Context, node *ParseNod
 			}
 			params = append(params, lengthParams...)
 
-			// Mapeia para função específica do banco
-			switch qb.dialect {
-			case "mysql":
-				return fmt.Sprintf("SUBSTRING(%s, %s, %s)", strSQL, startSQL, lengthSQL), params, nil
-			case "postgresql":
-				return fmt.Sprintf("SUBSTRING(%s FROM %s FOR %s)", strSQL, startSQL, lengthSQL), params, nil
-			case "oracle":
-				return fmt.Sprintf("SUBSTR(%s, %s, %s)", strSQL, startSQL, lengthSQL), params, nil
-			default:
-				return fmt.Sprintf("SUBSTRING(%s, %s, %s)", strSQL, startSQL, lengthSQL), params, nil
-			}
+			// Usa o dialect para construir a função
+			return qb.dialect.BuildSubstringFunction(strSQL, startSQL, lengthSQL), params, nil
 		} else {
-			// Mapeia para função específica do banco
-			switch qb.dialect {
-			case "mysql":
-				return fmt.Sprintf("SUBSTRING(%s, %s)", strSQL, startSQL), params, nil
-			case "postgresql":
-				return fmt.Sprintf("SUBSTRING(%s FROM %s)", strSQL, startSQL), params, nil
-			case "oracle":
-				return fmt.Sprintf("SUBSTR(%s, %s)", strSQL, startSQL), params, nil
-			default:
-				return fmt.Sprintf("SUBSTRING(%s, %s)", strSQL, startSQL), params, nil
-			}
+			// Usa o dialect para construir a função sem length
+			return qb.dialect.BuildSubstringFromFunction(strSQL, startSQL), params, nil
 		}
 
 	case "year", "month", "day", "hour", "minute", "second":
@@ -1042,34 +887,16 @@ func (qb *QueryBuilder) buildComputeFunction(ctx context.Context, node *ParseNod
 		}
 		params = append(params, argParams...)
 
-		// Mapeia para função específica do banco
-		switch qb.dialect {
-		case "mysql":
-			return fmt.Sprintf("%s(%s)", strings.ToUpper(functionName), argSQL), params, nil
-		case "postgresql":
-			return fmt.Sprintf("EXTRACT(%s FROM %s)", strings.ToUpper(functionName), argSQL), params, nil
-		case "oracle":
-			return fmt.Sprintf("EXTRACT(%s FROM %s)", strings.ToUpper(functionName), argSQL), params, nil
-		default:
-			return fmt.Sprintf("%s(%s)", strings.ToUpper(functionName), argSQL), params, nil
-		}
+		// Usa o dialect para construir a função
+		return qb.dialect.BuildDateExtractFunction(functionName, argSQL), params, nil
 
 	case "now":
 		if len(node.Children) != 0 {
 			return "", nil, fmt.Errorf("now function requires no arguments")
 		}
 
-		// Mapeia para função específica do banco
-		switch qb.dialect {
-		case "mysql":
-			return "NOW()", nil, nil
-		case "postgresql":
-			return "NOW()", nil, nil
-		case "oracle":
-			return "SYSDATE", nil, nil
-		default:
-			return "NOW()", nil, nil
-		}
+		// Usa o dialect para construir a função
+		return qb.dialect.BuildNowFunction(), nil, nil
 
 	default:
 		return "", nil, fmt.Errorf("unsupported compute function: %s", functionName)
@@ -1132,16 +959,7 @@ func (qb *QueryBuilder) getColumnName(propertyName string, metadata EntityMetada
 
 // QuoteIdentifier adiciona aspas aos identificadores quando necessário
 func (qb *QueryBuilder) QuoteIdentifier(identifier string) string {
-	switch qb.dialect {
-	case "mysql":
-		return fmt.Sprintf("`%s`", identifier)
-	case "postgresql":
-		return fmt.Sprintf(`"%s"`, identifier)
-	case "oracle":
-		return fmt.Sprintf(`"%s"`, identifier)
-	default:
-		return identifier
-	}
+	return qb.dialect.QuoteIdentifier(identifier)
 }
 
 // BuildSearchSQL constrói SQL para expressões $search
@@ -1309,7 +1127,15 @@ func (qb *QueryBuilder) buildSearchBinaryOperator(ctx context.Context, expr *Sea
 	params = append(params, leftParams...)
 	params = append(params, rightParams...)
 
-	return fmt.Sprintf("(%s %s %s)", leftSQL, operator, rightSQL), params, nil
+	var builder strings.Builder
+	builder.WriteString("(")
+	builder.WriteString(leftSQL)
+	builder.WriteString(" ")
+	builder.WriteString(operator)
+	builder.WriteString(" ")
+	builder.WriteString(rightSQL)
+	builder.WriteString(")")
+	return builder.String(), params, nil
 }
 
 // buildSearchUnaryOperator constrói SQL para operadores unários (NOT)
@@ -1363,54 +1189,17 @@ func (qb *QueryBuilder) isSearchableProperty(prop PropertyMetadata) bool {
 
 // supportsFullTextSearch verifica se o banco suporta full-text search
 func (qb *QueryBuilder) supportsFullTextSearch() bool {
-	switch qb.dialect {
-	case "mysql", "postgresql", "oracle":
-		return true
-	default:
-		return false
-	}
+	return qb.dialect.SupportsFullTextSearch()
 }
 
 // buildFullTextSearchCondition constrói condição de full-text search
 func (qb *QueryBuilder) buildFullTextSearchCondition(column, term string) (string, interface{}) {
-	switch qb.dialect {
-	case "mysql":
-		// MySQL FULLTEXT search
-		return fmt.Sprintf("MATCH(%s) AGAINST(? IN BOOLEAN MODE)", column), term
-
-	case "postgresql":
-		// PostgreSQL full-text search
-		return fmt.Sprintf("to_tsvector('english', %s) @@ plainto_tsquery('english', ?)", column), term
-
-	case "oracle":
-		// Oracle Text search
-		return fmt.Sprintf("CONTAINS(%s, ?) > 0", column), term
-
-	default:
-		// Fallback para LIKE
-		return fmt.Sprintf("%s LIKE ?", column), "%" + term + "%"
-	}
+	return qb.dialect.BuildFullTextSearchCondition(column, term)
 }
 
 // buildFullTextPhraseCondition constrói condição de busca por frase
 func (qb *QueryBuilder) buildFullTextPhraseCondition(column, phrase string) (string, interface{}) {
-	switch qb.dialect {
-	case "mysql":
-		// MySQL phrase search
-		return fmt.Sprintf("MATCH(%s) AGAINST(? IN BOOLEAN MODE)", column), fmt.Sprintf(`"%s"`, phrase)
-
-	case "postgresql":
-		// PostgreSQL phrase search
-		return fmt.Sprintf("to_tsvector('english', %s) @@ phraseto_tsquery('english', ?)", column), phrase
-
-	case "oracle":
-		// Oracle phrase search
-		return fmt.Sprintf("CONTAINS(%s, ?) > 0", column), fmt.Sprintf(`"%s"`, phrase)
-
-	default:
-		// Fallback para LIKE
-		return fmt.Sprintf("%s LIKE ?", column), "%" + phrase + "%"
-	}
+	return qb.dialect.BuildFullTextPhraseCondition(column, phrase)
 }
 
 // BuildSearchWhereClause constrói cláusula WHERE para busca

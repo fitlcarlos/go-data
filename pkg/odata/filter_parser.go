@@ -194,7 +194,7 @@ func IsSimpleFilter(filter *GoDataFilterQuery) bool {
 	}
 
 	// Verifica se é um operador de comparação com dois filhos
-	if filter.Tree.Token.Type == int(FilterTokenLogical) && len(filter.Tree.Children) == 2 {
+	if filter.Tree.Token.Type == int(FilterTokenComparison) && len(filter.Tree.Children) == 2 {
 		left := filter.Tree.Children[0]
 		right := filter.Tree.Children[1]
 

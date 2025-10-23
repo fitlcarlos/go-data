@@ -329,6 +329,48 @@ type GoDataSearchQuery struct {
 	RawValue string
 }
 
+// Query retorna a query de busca original
+func (q *GoDataSearchQuery) Query() string {
+	if q == nil {
+		return ""
+	}
+	return q.RawValue
+}
+
+// String retorna a representação string da query
+func (q *GoDataSearchQuery) String() string {
+	if q == nil {
+		return ""
+	}
+	return q.RawValue
+}
+
+// GetTerms extrai todos os termos de busca da query
+func (q *GoDataSearchQuery) GetTerms() []string {
+	if q == nil || q.RawValue == "" {
+		return []string{}
+	}
+
+	// Divide por espaços e remove termos vazios
+	terms := strings.Fields(q.RawValue)
+
+	// Remove operadores lógicos e parênteses
+	filtered := make([]string, 0, len(terms))
+	for _, term := range terms {
+		upper := strings.ToUpper(term)
+		if upper != "AND" && upper != "OR" && upper != "NOT" &&
+			term != "(" && term != ")" {
+			// Remove aspas se houver
+			term = strings.Trim(term, "\"'")
+			if term != "" {
+				filtered = append(filtered, term)
+			}
+		}
+	}
+
+	return filtered
+}
+
 // GoDataOrderByQuery representa uma query de ordenação OData (placeholder)
 type GoDataOrderByQuery struct {
 	OrderByItems []*OrderByItem
@@ -355,7 +397,12 @@ type ComputeItem struct {
 
 // Funções placeholder para parsers que ainda não foram implementados
 func ParseSearchString(ctx context.Context, search string) (*GoDataSearchQuery, error) {
-	// TODO: Implementar parser de search
+	// Retorna nil para string vazia (convenção Go)
+	if search == "" {
+		return nil, nil
+	}
+
+	// TODO: Implementar parser de search completo
 	return &GoDataSearchQuery{RawValue: search}, nil
 }
 

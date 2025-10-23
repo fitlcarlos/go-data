@@ -52,163 +52,95 @@ func (s *MultiTenantEntityService) getProviderForContext(ctx context.Context) Da
 	return s.server.provider
 }
 
+// extractTenantID helper para extrair tenant ID
+func (s *MultiTenantEntityService) extractTenantID(ctx context.Context) string {
+	if fiberCtx, ok := ctx.Value(FiberContextKey).(fiber.Ctx); ok {
+		return GetCurrentTenant(fiberCtx)
+	}
+	if tid, ok := ctx.Value(TenantContextKey).(string); ok {
+		return tid
+	}
+	return "default"
+}
+
 // logTenantOperation registra operação com informações do tenant
 func (s *MultiTenantEntityService) logTenantOperation(ctx context.Context, operation string, details string) {
-	tenantID := "default"
+	tenantID := s.extractTenantID(ctx)
+	s.server.logger.Printf("🏢 [%s] %s - %s: %s", tenantID, s.metadata.Name, operation, details)
+}
 
-	// Tenta extrair tenant ID do contexto
-	if fiberCtx, ok := ctx.Value(FiberContextKey).(fiber.Ctx); ok {
-		tenantID = GetCurrentTenant(fiberCtx)
-	} else if tid, ok := ctx.Value(TenantContextKey).(string); ok {
-		tenantID = tid
+// withProviderContext executa uma operação com provider resolvido dinamicamente
+func (s *MultiTenantEntityService) withProviderContext(
+	ctx context.Context,
+	operation string,
+	fn func() (any, error),
+) (any, error) {
+	// 1. Resolver provider dinamicamente
+	originalProvider := s.provider
+	s.provider = s.getProviderForContext(ctx)
+
+	// 2. Log da operação (início)
+	s.logTenantOperation(ctx, operation, "Starting")
+
+	// 3. Verificar disponibilidade
+	if s.provider == nil {
+		return nil, fmt.Errorf("provider não disponível para o tenant")
 	}
 
-	s.server.logger.Printf("🏢 [%s] %s - %s: %s", tenantID, s.metadata.Name, operation, details)
+	// 4. Executar operação
+	result, err := fn()
+
+	// 5. Restaurar provider original
+	s.provider = originalProvider
+
+	// 6. Log de resultado
+	if err != nil {
+		s.logTenantOperation(ctx, operation, fmt.Sprintf("Error: %v", err))
+		return nil, err
+	}
+
+	s.logTenantOperation(ctx, operation, "Success")
+	return result, nil
 }
 
 // Query executa uma consulta usando o provider apropriado
 func (s *MultiTenantEntityService) Query(ctx context.Context, options QueryOptions) (*ODataResponse, error) {
-	// Resolve o provider dinamicamente
-	originalProvider := s.provider
-	s.provider = s.getProviderForContext(ctx)
-
-	// Log da operação
-	s.logTenantOperation(ctx, "Query", fmt.Sprintf("Options: %+v", options))
-
-	// Verifica se o provider está disponível
-	if s.provider == nil {
-		return nil, fmt.Errorf("provider não disponível para o tenant")
-	}
-
-	// Chama o método original
-	response, err := s.BaseEntityService.Query(ctx, options)
-
-	// Restaura o provider original
-	s.provider = originalProvider
-
+	result, err := s.withProviderContext(ctx, "Query", func() (any, error) {
+		return s.BaseEntityService.Query(ctx, options)
+	})
 	if err != nil {
-		s.logTenantOperation(ctx, "Query", fmt.Sprintf("Error: %v", err))
 		return nil, err
 	}
-
-	s.logTenantOperation(ctx, "Query", "Success")
-	return response, nil
+	return result.(*ODataResponse), nil
 }
 
 // Get executa uma consulta de entidade específica usando o provider apropriado
 func (s *MultiTenantEntityService) Get(ctx context.Context, keys map[string]any) (any, error) {
-	// Resolve o provider dinamicamente
-	originalProvider := s.provider
-	s.provider = s.getProviderForContext(ctx)
-
-	// Log da operação
-	s.logTenantOperation(ctx, "Get", fmt.Sprintf("Keys: %+v", keys))
-
-	// Verifica se o provider está disponível
-	if s.provider == nil {
-		return nil, fmt.Errorf("provider não disponível para o tenant")
-	}
-
-	// Chama o método original
-	result, err := s.BaseEntityService.Get(ctx, keys)
-
-	// Restaura o provider original
-	s.provider = originalProvider
-
-	if err != nil {
-		s.logTenantOperation(ctx, "Get", fmt.Sprintf("Error: %v", err))
-		return nil, err
-	}
-
-	s.logTenantOperation(ctx, "Get", "Success")
-	return result, nil
+	return s.withProviderContext(ctx, "Get", func() (any, error) {
+		return s.BaseEntityService.Get(ctx, keys)
+	})
 }
 
 // Create cria uma nova entidade usando o provider apropriado
 func (s *MultiTenantEntityService) Create(ctx context.Context, entity any) (any, error) {
-	// Resolve o provider dinamicamente
-	originalProvider := s.provider
-	s.provider = s.getProviderForContext(ctx)
-
-	// Log da operação
-	s.logTenantOperation(ctx, "Create", fmt.Sprintf("Entity: %T", entity))
-
-	// Verifica se o provider está disponível
-	if s.provider == nil {
-		return nil, fmt.Errorf("provider não disponível para o tenant")
-	}
-
-	// Chama o método original
-	result, err := s.BaseEntityService.Create(ctx, entity)
-
-	// Restaura o provider original
-	s.provider = originalProvider
-
-	if err != nil {
-		s.logTenantOperation(ctx, "Create", fmt.Sprintf("Error: %v", err))
-		return nil, err
-	}
-
-	s.logTenantOperation(ctx, "Create", "Success")
-	return result, nil
+	return s.withProviderContext(ctx, "Create", func() (any, error) {
+		return s.BaseEntityService.Create(ctx, entity)
+	})
 }
 
 // Update atualiza uma entidade usando o provider apropriado
 func (s *MultiTenantEntityService) Update(ctx context.Context, keys map[string]any, entity any) (any, error) {
-	// Resolve o provider dinamicamente
-	originalProvider := s.provider
-	s.provider = s.getProviderForContext(ctx)
-
-	// Log da operação
-	s.logTenantOperation(ctx, "Update", fmt.Sprintf("Keys: %+v, Entity: %T", keys, entity))
-
-	// Verifica se o provider está disponível
-	if s.provider == nil {
-		return nil, fmt.Errorf("provider não disponível para o tenant")
-	}
-
-	// Chama o método original
-	result, err := s.BaseEntityService.Update(ctx, keys, entity)
-
-	// Restaura o provider original
-	s.provider = originalProvider
-
-	if err != nil {
-		s.logTenantOperation(ctx, "Update", fmt.Sprintf("Error: %v", err))
-		return nil, err
-	}
-
-	s.logTenantOperation(ctx, "Update", "Success")
-	return result, nil
+	return s.withProviderContext(ctx, "Update", func() (any, error) {
+		return s.BaseEntityService.Update(ctx, keys, entity)
+	})
 }
 
 // Delete remove uma entidade usando o provider apropriado
 func (s *MultiTenantEntityService) Delete(ctx context.Context, keys map[string]any) error {
-	// Resolve o provider dinamicamente
-	originalProvider := s.provider
-	s.provider = s.getProviderForContext(ctx)
-
-	// Log da operação
-	s.logTenantOperation(ctx, "Delete", fmt.Sprintf("Keys: %+v", keys))
-
-	// Verifica se o provider está disponível
-	if s.provider == nil {
-		return fmt.Errorf("provider não disponível para o tenant")
-	}
-
-	// Chama o método original
-	err := s.BaseEntityService.Delete(ctx, keys)
-
-	// Restaura o provider original
-	s.provider = originalProvider
-
-	if err != nil {
-		s.logTenantOperation(ctx, "Delete", fmt.Sprintf("Error: %v", err))
-		return err
-	}
-
-	s.logTenantOperation(ctx, "Delete", "Success")
-	return nil
+	_, err := s.withProviderContext(ctx, "Delete", func() (any, error) {
+		return nil, s.BaseEntityService.Delete(ctx, keys)
+	})
+	return err
 }
 
 // GetTenantProvider retorna o provider para um tenant específico

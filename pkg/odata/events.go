@@ -41,16 +41,17 @@ const (
 
 // EventContext contém informações contextuais sobre o evento
 type EventContext struct {
-	Context      context.Context
-	FiberContext fiber.Ctx
-	EntityName   string
-	EntityType   string
-	UserID       string
-	UserRoles    []string
-	UserScopes   []string
-	RequestID    string
-	Timestamp    int64
-	Extra        map[string]interface{}
+	Context          context.Context
+	FiberContext     fiber.Ctx
+	EntityName       string
+	EntityType       string
+	UserID           string
+	UserRoles        []string
+	UserScopes       []string
+	RequestID        string
+	Timestamp        int64
+	Extra            map[string]interface{}
+	DatabaseProvider DatabaseProvider // Para acesso direto ao provider
 }
 
 // EventArgs é a interface base para todos os argumentos de evento
@@ -64,6 +65,8 @@ type EventArgs interface {
 	Cancel(reason string)
 	IsCanceled() bool
 	GetCancelReason() string
+	Manager() *ObjectManager
+	GetManager() *ObjectManager
 }
 
 // BaseEventArgs implementa a funcionalidade comum para todos os eventos
@@ -91,6 +94,19 @@ func (e *BaseEventArgs) Cancel(reason string) {
 		e.canceled = true
 		e.cancelReason = reason
 	}
+}
+
+// Manager retorna ObjectManager para uso nos eventos
+func (e *BaseEventArgs) Manager() *ObjectManager {
+	return e.GetManager()
+}
+
+// GetManager retorna ObjectManager para uso nos eventos
+func (e *BaseEventArgs) GetManager() *ObjectManager {
+	if e.Context != nil && e.Context.DatabaseProvider != nil {
+		return NewObjectManager(e.Context.DatabaseProvider, e.Context.Context)
+	}
+	return nil
 }
 
 // EntityGetArgs argumentos para evento OnEntityGet

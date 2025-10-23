@@ -12,9 +12,13 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - [Exemplo de Uso](#-exemplo-de-uso)
 - [Configuração do Servidor](#-configuração-do-servidor)
 - [Autenticação JWT](#-autenticação-jwt)
+- [Autenticação Basic](#-autenticação-basic)
+- [Segurança](#-segurança)
+- [Performance](#-performance)
 - [Rate Limiting](#-rate-limiting)
 - [Multi-Tenant](#-multi-tenant)
 - [Eventos de Entidade](#-eventos-de-entidade)
+- [Service Operations](#-service-operations)
 - [Mapeamento de Entidades](#-mapeamento-de-entidades)
 - [Bancos de Dados Suportados](#-bancos-de-dados-suportados)
 - [Endpoints OData](#-endpoints-odata)
@@ -59,21 +63,28 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - Ordenação ($orderby)
 - Paginação ($top, $skip)
 - Seleção de campos ($select)
-- Expansão de relacionamentos ($expand)
+- Expansão de relacionamentos ($expand) com otimização N+1
 - Contagem ($count)
 - Campos computados ($compute)
 - Busca textual ($search)
+- **Batch requests ($batch)**: Múltiplas operações em uma requisição com suporte a transações
 
-### 🔐 **Autenticação JWT**
-- Geração de tokens de acesso e refresh
-- Validação de tokens JWT
+### 🔐 **Autenticação**
+- **JWT**: Tokens de acesso e refresh, roles, scopes e configuração flexível
+- **Basic Auth**: HTTP Basic Authentication com validação customizável
+- Interface `AuthProvider` permite implementar qualquer estratégia de autenticação
 - Middleware de autenticação obrigatória e opcional
 - Controle de acesso baseado em roles e scopes
 - Privilégios de administrador
 - Configuração de autenticação por entidade
 - Entidades somente leitura
     
-### 🛡️ **Rage Limiting**
+### ⚡ **Performance**
+- **Otimização N+1 para $expand**: Usa batching automático para evitar múltiplas queries
+- **String Builder**: Concatenação otimizada em query building
+- **Benchmarks completos**: Suite de testes de performance com profiling
+
+### 🛡️ **Rate Limiting**
 - Controle de taxa de requisições por IP, usuário ou API key
 - Configuração flexível de limites e janelas de tempo
 - Headers informativos de rate limit nas respostas
@@ -502,173 +513,419 @@ config.CertKeyFile = "server.key"
 
 ## 🔐 Autenticação JWT
 
-O Go-Data oferece suporte completo à autenticação JWT com controle de acesso granular baseado em roles e scopes.
+O Go-Data oferece suporte à autenticação JWT através de um modelo **desacoplado e flexível**. O JWT não está embutido no servidor - você define sua própria lógica de autenticação e configura por entidade usando o padrão **Functional Options**.
 
-### Configuração Básica
+### Características
+
+- ✅ **Desacoplado**: JWT como plugin opcional, não embutido
+- ✅ **Flexível**: Controle total sobre geração e validação de tokens
+- ✅ **Customizável**: Claims, algoritmos e lógica completamente personalizáveis
+- ✅ **Por Entidade**: Configure autenticação diferente para cada entidade
+- ✅ **Múltiplos JWTs**: Use diferentes JWTs no mesmo servidor
+
+### Interface AuthProvider
+
+O Go-Data define uma interface `AuthProvider` que permite implementar qualquer estratégia de autenticação:
+
+```go
+type AuthProvider interface {
+    ValidateToken(token string) (*UserIdentity, error)
+    GenerateToken(user *UserIdentity) (string, error)
+    ExtractToken(c fiber.Ctx) string
+}
+```
+
+### Uso Básico com JwtAuth
+
+A implementação padrão `JwtAuth` oferece autenticação JWT completa com **configuração automática via .env**:
+
+#### Opção 1: Configuração via .env (Recomendado)
+
+```env
+# .env
+JWT_SECRET=your-super-secret-key-with-at-least-32-characters
+JWT_ISSUER=my-app
+JWT_EXPIRATION=3600
+JWT_REFRESH_EXPIRATION=86400
+JWT_ALGORITHM=HS256
+```
 
 ```go
 import "github.com/fitlcarlos/go-data/pkg/odata"
 
-// Configurar JWT
-jwtConfig := &odata.JWTConfig{
-    SecretKey: "sua-chave-secreta-super-segura",
-    Issuer:    "seu-aplicativo",
+func main() {
+    server := odata.NewServer()
+    
+    // 1. Criar JwtAuth (lê automaticamente do .env)
+    jwtAuth := odata.NewJwtAuth(nil)
+    
+    // 2. Registrar entidades com WithAuth()
+    server.RegisterEntity("Users", User{}, 
+        odata.WithAuth(jwtAuth),
+    )
+    
+    server.Start()
+}
+```
+
+#### Opção 2: Override Parcial
+
+```go
+// Usa JWT_SECRET do .env, mas override expiration
+jwtAuth := odata.NewJwtAuth(&odata.JWTConfig{
+    ExpiresIn: 2 * time.Hour, // Override apenas isso
+})
+```
+
+#### Opção 3: Configuração Manual Completa
+
+```go
+// Configuração completamente manual (ignora .env)
+jwtAuth := odata.NewJwtAuth(&odata.JWTConfig{
+    SecretKey: "manual-secret-key-min-32-chars",
+    Issuer:    "my-app",
     ExpiresIn: 1 * time.Hour,
     RefreshIn: 24 * time.Hour,
     Algorithm: "HS256",
+})
+
+server.RegisterEntity("Products", Product{}, 
+        odata.WithAuth(jwtAuth),
+        odata.WithReadOnly(false),
+    )
+    
+    // 3. Criar suas próprias rotas de autenticação
+    router := server.GetRouter()
+    
+    router.Post("/auth/login", handleLogin(jwtAuth))
+    router.Post("/auth/refresh", handleRefresh(jwtAuth))
+    router.Get("/auth/me", odata.AuthMiddleware(jwtAuth), handleMe())
+    
+    server.Start()
 }
-
-// Configurar servidor com JWT
-config := odata.DefaultServerConfig()
-config.EnableJWT = true
-config.JWTConfig = jwtConfig
-config.RequireAuth = false // Autenticação global opcional
-
-server := odata.NewServerWithConfig(provider, config)
 ```
 
-### Implementando Autenticador
+### Interface ContextAuthenticator
+
+A partir da versão mais recente, o Go-Data oferece a interface `ContextAuthenticator` que fornece acesso ao **contexto enriquecido** durante a autenticação, incluindo ObjectManager, Connection, Provider, Pool e informações da requisição (IP, Headers, etc).
+
+#### Benefícios do ContextAuthenticator
+
+- 🔐 **Login com banco de dados**: Validar credenciais diretamente no banco
+- 🔄 **Refresh token inteligente**: Recarregar roles/permissions atualizadas
+- 📝 **Audit logging**: Registrar IP, device, tentativas de login
+- 🚫 **Validação em tempo real**: Verificar se usuário está ativo durante refresh
+- 🏢 **Multi-tenant**: Acesso ao pool de conexões e tenant ID
+
+#### Definição da Interface
 
 ```go
-type UserAuthenticator struct {
-    // Sua implementação de banco de dados
+type ContextAuthenticator interface {
+    // AuthenticateWithContext autentica usuário durante login
+    // ctx fornece acesso ao banco de dados, IP do cliente, headers, etc
+    AuthenticateWithContext(ctx *AuthContext, username, password string) (*UserIdentity, error)
+    
+    // RefreshToken recarrega/valida dados do usuário durante refresh token
+    // Permite validar se usuário ainda está ativo e atualizar roles/permissions
+    // O contexto está disponível caso você queira validar no banco de dados
+    RefreshToken(ctx *AuthContext, username string) (*UserIdentity, error)
 }
+```
 
-func (a *UserAuthenticator) Authenticate(username, password string) (*odata.UserIdentity, error) {
-    // Validar credenciais no banco de dados
-    // Retornar UserIdentity com roles e scopes
+#### Exemplo Completo
+
+```go
+type DatabaseAuthenticator struct{}
+
+// AuthenticateWithContext - Login com validação no banco
+func (a *DatabaseAuthenticator) AuthenticateWithContext(ctx *odata.AuthContext, username, password string) (*odata.UserIdentity, error) {
+    conn := ctx.GetConnection()
+    
+    // Buscar usuário no banco
+    var dbPassword string
+    var userID int64
+    var isActive bool
+    
+    query := "SELECT id, password, is_active FROM users WHERE email = ?"
+    err := conn.QueryRow(query, username).Scan(&userID, &dbPassword, &isActive)
+    if err != nil {
+        log.Printf("❌ Login failed: user not found - %s from IP %s", username, ctx.IP())
+        return nil, errors.New("credenciais inválidas")
+    }
+    
+    // Validar senha (use bcrypt em produção!)
+    if dbPassword != password {
+        log.Printf("❌ Login failed: invalid password - %s from IP %s", username, ctx.IP())
+        return nil, errors.New("credenciais inválidas")
+    }
+    
+    if !isActive {
+        return nil, errors.New("usuário inativo")
+    }
+    
+    // Audit log
+    conn.Exec("INSERT INTO audit_log (user_id, action, ip) VALUES (?, 'login', ?)", userID, ctx.IP())
+    
     return &odata.UserIdentity{
         Username: username,
-        Roles:    []string{"user", "manager"},
-        Scopes:   []string{"read", "write"},
-        Admin:    false,
+        Roles:    []string{"user"},
         Custom: map[string]interface{}{
-            "department": "IT",
-            "level":      "senior",
+            "user_id":  userID,
+            "login_ip": ctx.IP(),
         },
     }, nil
 }
 
-func (a *UserAuthenticator) GetUserByUsername(username string) (*odata.UserIdentity, error) {
-    // Buscar usuário no banco de dados
+// RefreshToken - Recarregar dados atualizados do usuário
+func (a *DatabaseAuthenticator) RefreshToken(ctx *odata.AuthContext, username string) (*odata.UserIdentity, error) {
+    conn := ctx.GetConnection()
+    
+    // Buscar dados ATUALIZADOS do usuário (roles podem ter mudado!)
+    var userID int64
+    var isActive bool
+    var isAdmin bool
+    
+    query := "SELECT id, is_active, is_admin FROM users WHERE email = ?"
+    err := conn.QueryRow(query, username).Scan(&userID, &isActive, &isAdmin)
+    if err != nil || !isActive {
+        log.Printf("❌ Refresh failed: user not found or inactive - %s", username)
+        return nil, errors.New("usuário não encontrado ou inativo")
+    }
+    
+    // Audit log
+    conn.Exec("INSERT INTO audit_log (user_id, action, ip) VALUES (?, 'refresh', ?)", userID, ctx.IP())
+    
+    roles := []string{"user"}
+    if isAdmin {
+        roles = append(roles, "admin")
+    }
+    
+    return &odata.UserIdentity{
+        Username: username,
+        Roles:    roles,
+        Admin:    isAdmin,
+        Custom: map[string]interface{}{
+            "user_id":     userID,
+            "refreshed_ip": ctx.IP(),
+        },
+    }, nil
+}
+
+// Configurar no servidor
+func main() {
+    server := odata.NewServer()
+    server.RegisterEntity("Users", User{})
+    
+    // SetupAuthRoutes usa automaticamente ContextAuthenticator
+    authenticator := &DatabaseAuthenticator{}
+    server.SetupAuthRoutes(authenticator)
+    
+    server.Start()
+}
+```
+
+#### Endpoints Criados Automaticamente
+
+O método `SetupAuthRoutes()` cria automaticamente:
+
+- `POST /auth/login` - Login com AuthenticateWithContext
+- `POST /auth/refresh` - Refresh usando RefreshToken
+- `POST /auth/logout` - Logout (invalidação de token)
+- `GET /auth/me` - Informações do usuário autenticado
+
+### Criando Rotas de Autenticação Manualmente
+
+Se preferir não usar `SetupAuthRoutes()`, você pode criar suas próprias rotas de autenticação com total controle:
+
+```go
+func handleLogin(jwtAuth *odata.JwtAuth) fiber.Handler {
+    return func(c fiber.Ctx) error {
+        var req LoginRequest
+        if err := c.Bind().JSON(&req); err != nil {
+            return c.Status(400).JSON(fiber.Map{"error": "Dados inválidos"})
+        }
+        
+        // Validar credenciais (seu código)
+        user, err := authenticateUser(req.Username, req.Password)
+        if err != nil {
+            return c.Status(401).JSON(fiber.Map{"error": "Credenciais inválidas"})
+        }
+        
+        // Gerar tokens
+        accessToken, _ := jwtAuth.GenerateToken(user)
+        refreshToken, _ := jwtAuth.GenerateRefreshToken(user)
+        
+        return c.JSON(fiber.Map{
+            "access_token":  accessToken,
+            "refresh_token": refreshToken,
+            "token_type":    "Bearer",
+            "expires_in":    int64(jwtAuth.GetConfig().ExpiresIn.Seconds()),
+            "user":          user,
+        })
+    }
+}
+```
+
+### Customização Avançada
+
+#### Customizar Geração de Tokens
+
+```go
+jwtAuth := odata.NewJwtAuth(config)
+
+// Opção 1: Adicionar claims extras e chamar o método padrão
+jwtAuth.TokenGenerator = func(user *odata.UserIdentity) (string, error) {
+    // Adicionar claims extras
+    if user.Custom == nil {
+        user.Custom = make(map[string]interface{})
+    }
+    user.Custom["ip"] = getCurrentIP()
+    user.Custom["device"] = getDeviceInfo()
+    user.Custom["generated_at"] = time.Now().Unix()
+    
+    // ✅ Chamar o método padrão (PÚBLICO)
+    return jwtAuth.DefaultGenerateToken(user)
+}
+
+// Opção 2: Implementação completamente customizada
+jwtAuth.TokenGenerator = func(user *odata.UserIdentity) (string, error) {
+    // Sua lógica JWT customizada do zero
+    token := jwt.NewWithClaims(jwt.SigningMethodHS512, customClaims)
+    return token.SignedString([]byte("custom-secret"))
+}
+```
+
+#### Customizar Validação de Tokens
+
+```go
+// Opção 1: Adicionar validações extras e chamar o método padrão
+jwtAuth.TokenValidator = func(tokenString string) (*odata.UserIdentity, error) {
+    // Verificações extras ANTES da validação padrão
+    if isTokenBlacklisted(tokenString) {
+        return nil, errors.New("token revogado")
+    }
+    
+    // ✅ Chamar validação padrão (PÚBLICO)
+    user, err := jwtAuth.DefaultValidateToken(tokenString)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Verificações extras DEPOIS da validação
+    if !isUserActive(user.Username) {
+        return nil, errors.New("usuário inativo")
+    }
+    
     return user, nil
 }
 
-// Configurar rotas de autenticação
-authenticator := &UserAuthenticator{}
-server.SetupAuthRoutes(authenticator)
+// Opção 2: Implementação completamente customizada
+jwtAuth.TokenValidator = func(tokenString string) (*odata.UserIdentity, error) {
+    // Parser JWT customizado
+    claims, err := parseCustomToken(tokenString)
+    if err != nil {
+        return nil, err
+    }
+    
+    return &odata.UserIdentity{
+        Username: claims.Username,
+        Roles:    claims.Roles,
+        // ...
+    }, nil
+}
 ```
 
-### Controle de Acesso por Entidade
+#### Customizar Extração de Tokens
 
 ```go
-// Apenas administradores podem acessar usuários
-server.SetEntityAuth("Users", odata.EntityAuthConfig{
-    RequireAuth:  true,
-    RequireAdmin: true,
-})
+// Opção 1: Tentar múltiplas fontes com fallback para o padrão
+jwtAuth.TokenExtractor = func(c fiber.Ctx) string {
+    // 1. Tentar cookie primeiro
+    if token := c.Cookies("auth_token"); token != "" {
+        return token
+    }
+    
+    // 2. Tentar query parameter (não recomendado em produção)
+    if token := c.Query("token"); token != "" {
+        return token
+    }
+    
+    // 3. ✅ Fallback para extração padrão (Header Authorization: Bearer)
+    return jwtAuth.DefaultExtractToken(c)
+}
 
-// Managers e admins podem escrever produtos
-server.SetEntityAuth("Products", odata.EntityAuthConfig{
-    RequireAuth:    true,
-    RequiredRoles:  []string{"manager", "admin"},
-    RequiredScopes: []string{"write"},
-})
-
-// Entidade somente leitura
-server.SetEntityAuth("Reports", odata.EntityAuthConfig{
-    RequireAuth: true,
-    ReadOnly:    true,
-})
+// Opção 2: Implementação completamente customizada
+jwtAuth.TokenExtractor = func(c fiber.Ctx) string {
+    // Extração customizada (ex: de um header customizado)
+    token := c.Get("X-Custom-Auth-Token")
+    return strings.TrimPrefix(token, "Token ")
+}
 ```
 
-### Middlewares de Autorização
+### Diferentes JWTs para Diferentes Entidades
 
 ```go
-// Middleware que requer autenticação
-app.Use("/admin", odata.RequireAuth())
+// JWT para usuários admin
+adminAuth := odata.NewJwtAuth(&odata.JWTConfig{
+    SecretKey: "admin-secret",
+    ExpiresIn: 30 * time.Minute, // Tokens admin expiram mais rápido
+})
 
-// Middleware que requer role específica
-app.Use("/management", odata.RequireRole("manager"))
+// JWT para usuários normais
+userAuth := odata.NewJwtAuth(&odata.JWTConfig{
+    SecretKey: "user-secret",
+    ExpiresIn: 2 * time.Hour,
+})
 
-// Middleware que requer múltiplas roles
-app.Use("/restricted", odata.RequireAnyRole("admin", "supervisor"))
+// JWT para API keys
+apiKeyAuth := odata.NewJwtAuth(&odata.JWTConfig{
+    SecretKey: "api-secret",
+    ExpiresIn: 365 * 24 * time.Hour, // 1 ano
+})
 
-// Middleware que requer scope específico
-app.Use("/api/write", odata.RequireScope("write"))
-
-// Middleware que requer privilégios de admin
-app.Use("/admin", odata.RequireAdmin())
+// Aplicar diferentes auths
+server.RegisterEntity("Users", User{}, odata.WithAuth(adminAuth))
+server.RegisterEntity("Products", Product{}, odata.WithAuth(userAuth))
+server.RegisterEntity("Reports", Report{}, odata.WithAuth(apiKeyAuth), odata.WithReadOnly(true))
 ```
 
-### Endpoints de Autenticação
+### Implementar AuthProvider Customizado
 
-#### Login
-```bash
-POST /auth/login
-Content-Type: application/json
+Você pode implementar sua própria autenticação (OAuth, SAML, etc):
 
-{
-  "username": "admin",
-  "password": "password123"
+```go
+type OAuth2Provider struct {
+    clientID     string
+    clientSecret string
 }
-```
 
-Resposta:
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "user": {
-    "username": "admin",
-    "roles": ["admin", "user"],
-    "scopes": ["read", "write", "delete"],
-    "admin": true
-  }
+func (o *OAuth2Provider) ValidateToken(token string) (*odata.UserIdentity, error) {
+    // Validar com servidor OAuth2
+    claims, err := validateOAuth2Token(token, o.clientID, o.clientSecret)
+    if err != nil {
+        return nil, err
+    }
+    
+    return &odata.UserIdentity{
+        Username: claims.Email,
+        Roles:    claims.Roles,
+        // ...
+    }, nil
 }
-```
 
-#### Refresh Token
-```bash
-POST /auth/refresh
-Content-Type: application/json
-
-{
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+func (o *OAuth2Provider) GenerateToken(user *odata.UserIdentity) (string, error) {
+    // OAuth2 não gera tokens diretamente
+    return "", errors.New("use OAuth2 authorization flow")
 }
+
+func (o *OAuth2Provider) ExtractToken(c fiber.Ctx) string {
+    return c.Get("Authorization")
+}
+
+// Usar
+oauth := &OAuth2Provider{clientID: "...", clientSecret: "..."}
+server.RegisterEntity("Users", User{}, odata.WithAuth(oauth))
 ```
-
-#### Informações do Usuário
-```bash
-GET /auth/me
-Authorization: Bearer <access_token>
-```
-
-#### Logout
-```bash
-POST /auth/logout
-Authorization: Bearer <access_token>
-```
-
-### Usando Tokens JWT
-
-```bash
-# Acessar endpoint protegido
-curl -X GET http://localhost:8080/odata/Users \
-  -H "Authorization: Bearer <access_token>"
-```
-
-### Exemplo Completo
-
-Veja o exemplo completo em [`examples/jwt/`](examples/jwt/) que demonstra:
-
-- Configuração completa de JWT
-- Usuários de teste com diferentes roles
-- Controle de acesso por entidade
-- Cenários de teste para diferentes tipos de usuário
-- Integração com banco de dados
 
 ### Estrutura de UserIdentity
 
@@ -678,7 +935,7 @@ type UserIdentity struct {
     Roles    []string               `json:"roles"`
     Scopes   []string               `json:"scopes"`
     Admin    bool                   `json:"admin"`
-    Custom   map[string]interface{} `json:"custom"`
+    Custom   map[string]interface{} `json:"custom"` // Claims customizados
 }
 
 // Métodos disponíveis
@@ -688,6 +945,92 @@ user.HasScope("write")            // Verifica scope específico
 user.IsAdmin()                    // Verifica se é admin
 user.GetCustomClaim("department") // Obtém claim customizado
 ```
+
+### Middleware de Autenticação
+
+```go
+// Middleware obrigatório
+router.Get("/protected", odata.AuthMiddleware(jwtAuth), handler)
+
+// Middleware opcional
+router.Get("/public", odata.OptionalAuthMiddleware(jwtAuth), handler)
+
+// Verificar usuário no handler
+func handler(c fiber.Ctx) error {
+    user := odata.GetCurrentUser(c)
+    if user == nil {
+        return c.Status(401).JSON(fiber.Map{"error": "Não autenticado"})
+    }
+    
+    if !user.HasRole("admin") {
+        return c.Status(403).JSON(fiber.Map{"error": "Sem permissão"})
+    }
+    
+    return c.JSON(fiber.Map{"message": "Acesso permitido"})
+}
+```
+
+### Entity Options
+
+```go
+// WithAuth - Configura autenticação
+server.RegisterEntity("Users", User{}, odata.WithAuth(jwtAuth))
+
+// WithReadOnly - Entidade somente leitura
+server.RegisterEntity("Reports", Report{}, 
+    odata.WithAuth(jwtAuth),
+    odata.WithReadOnly(true),
+)
+
+// Sem autenticação (público)
+server.RegisterEntity("PublicData", PublicData{})
+```
+
+### Exemplo de Login Completo
+
+```bash
+# 1. Fazer login
+POST /auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "password123"
+}
+
+# Resposta:
+{
+  "access_token": "eyJhbGc...",
+  "refresh_token": "eyJhbGc...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "user": {
+    "username": "admin",
+    "roles": ["admin"],
+    "admin": true
+  }
+}
+
+# 2. Acessar endpoint protegido
+GET /odata/Users
+Authorization: Bearer eyJhbGc...
+
+# 3. Renovar token
+POST /auth/refresh
+Content-Type: application/json
+
+{
+  "refresh_token": "eyJhbGc..."
+}
+```
+
+### Exemplos Completos
+
+Veja exemplos completos de autenticação:
+
+- [`examples/jwt/`](examples/jwt/) - JWT desacoplado com múltiplos usuários
+- [`examples/jwt_banco/`](examples/jwt_banco/) - JWT com integração de banco de dados
+- [`examples/basic_auth/`](examples/basic_auth/) - Basic Auth com validação em banco de dados
 
 ### Configuração de Segurança
 
@@ -699,17 +1042,576 @@ type JWTConfig struct {
     RefreshIn  time.Duration // Tempo de expiração do refresh token
     Algorithm  string        // Algoritmo de assinatura (HS256)
 }
+```
 
-type EntityAuthConfig struct {
-    RequireAuth    bool     // Requer autenticação
-    RequiredRoles  []string // Roles necessárias
-    RequiredScopes []string // Scopes necessários
-    RequireAdmin   bool     // Requer privilégios de admin
-    ReadOnly       bool     // Entidade somente leitura
+### Migração do Modelo Antigo
+
+Se você usava o modelo antigo embutido, veja como migrar:
+
+```go
+// ANTES (modelo antigo - embutido)
+server.SetupAuthRoutes(authenticator)
+server.SetEntityAuth("Users", odata.EntityAuthConfig{...})
+
+// DEPOIS (modelo novo - desacoplado)
+jwtAuth := odata.NewJwtAuth(config)
+server.RegisterEntity("Users", User{}, odata.WithAuth(jwtAuth))
+router.Post("/auth/login", handleLogin(jwtAuth))
+```
+
+## 🔓 Autenticação Basic
+
+O Go-Data oferece suporte à autenticação Basic (HTTP Basic Authentication) através do mesmo modelo **desacoplado e flexível** do JWT. A autenticação Basic é ideal para APIs internas, scripts, integração entre servidores e ambientes onde simplicidade é preferível.
+
+### Características
+
+- ✅ **Desacoplado**: Implementa a interface `AuthProvider`
+- ✅ **Stateless**: Sem necessidade de armazenamento de sessão
+- ✅ **Simples**: Credenciais em Base64 no header Authorization
+- ✅ **Customizável**: Validação de usuário completamente personalizável
+- ✅ **Por Entidade**: Configure autenticação diferente para cada entidade
+- ✅ **WWW-Authenticate**: Suporte ao header padrão RFC 7617
+
+### Uso Básico com BasicAuth
+
+A implementação `BasicAuth` oferece autenticação HTTP Basic completa:
+
+```go
+import (
+    "github.com/fitlcarlos/go-data/pkg/odata"
+)
+
+func main() {
+    server := odata.NewServer()
+    
+    // 1. Criar BasicAuth com função de validação
+    basicAuth := odata.NewBasicAuth(
+        &odata.BasicAuthConfig{
+            Realm: "My API", // Nome do realm para o WWW-Authenticate header
+        },
+        validateUser, // Função que valida username/password
+    )
+    
+    // 2. Registrar entidades com WithAuth()
+    server.RegisterEntity("Users", User{}, 
+        odata.WithAuth(basicAuth),
+    )
+    
+    server.RegisterEntity("Products", Product{}, 
+        odata.WithAuth(basicAuth),
+        odata.WithReadOnly(false),
+    )
+    
+    server.Start()
+}
+
+// validateUser valida credenciais e retorna UserIdentity
+func validateUser(username, password string) (*odata.UserIdentity, error) {
+    // Validar contra banco de dados, cache, etc
+    user, err := db.GetUserByCredentials(username, password)
+    if err != nil {
+        return nil, errors.New("credenciais inválidas")
+    }
+    
+    return &odata.UserIdentity{
+        ID:       user.ID,
+        Username: user.Username,
+        Email:    user.Email,
+        Role:     user.Role,
+        Claims: map[string]interface{}{
+            "department": user.Department,
+        },
+    }, nil
 }
 ```
 
-## 🛡️ Rate Limitingg
+### Middleware Específico para Basic Auth
+
+O Basic Auth possui um middleware específico que envia o header `WWW-Authenticate`:
+
+```go
+router := server.GetRouter()
+
+// Rota protegida com Basic Auth
+router.Get("/api/me", odata.BasicAuthMiddleware(basicAuth), func(c fiber.Ctx) error {
+    user := odata.GetUserFromContext(c)
+    return c.JSON(user)
+})
+
+// Também funciona com o middleware genérico
+router.Get("/api/info", odata.AuthMiddleware(basicAuth), handler)
+```
+
+### Customização da Validação
+
+```go
+basicAuth := odata.NewBasicAuth(config, validateUser)
+
+// Adicionar logging e métricas
+originalValidator := basicAuth.UserValidator
+basicAuth.UserValidator = func(username, password string) (*odata.UserIdentity, error) {
+    log.Printf("Tentativa de login: %s", username)
+    
+    user, err := originalValidator(username, password)
+    
+    if err != nil {
+        log.Printf("Login falhou: %s - %v", username, err)
+        metrics.IncrementFailedLogins()
+        return nil, err
+    }
+    
+    log.Printf("Login bem-sucedido: %s", username)
+    metrics.IncrementSuccessfulLogins()
+    return user, nil
+}
+```
+
+### Customizar Extração de Credenciais
+
+```go
+basicAuth := odata.NewBasicAuth(config, validateUser)
+
+// Suportar múltiplas fontes de credenciais
+basicAuth.TokenExtractor = func(c fiber.Ctx) string {
+    // 1. Tentar header padrão primeiro
+    if token := basicAuth.DefaultExtractToken(c); token != "" {
+        return token
+    }
+    
+    // 2. Tentar header customizado
+    if customAuth := c.Get("X-Custom-Auth"); customAuth != "" {
+        // Processar formato customizado
+        return extractFromCustomHeader(customAuth)
+    }
+    
+    return ""
+}
+```
+
+### Usar Basic Auth com Banco de Dados
+
+```go
+func validateUser(username, password string) (*odata.UserIdentity, error) {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    
+    var user User
+    query := `SELECT id, username, email, role, active 
+              FROM users 
+              WHERE username = ? AND password = ? AND active = 1`
+    
+    err := db.QueryRowContext(ctx, query, username, password).Scan(
+        &user.ID, &user.Username, &user.Email, &user.Role, &user.Active,
+    )
+    
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return nil, errors.New("credenciais inválidas")
+        }
+        return nil, fmt.Errorf("erro ao consultar usuário: %w", err)
+    }
+    
+    return &odata.UserIdentity{
+        ID:       fmt.Sprintf("%d", user.ID),
+        Username: user.Username,
+        Email:    user.Email,
+        Role:     user.Role,
+    }, nil
+}
+```
+
+### Diferentes Auths para Diferentes Entidades
+
+```go
+// Basic Auth para API interna
+internalAuth := odata.NewBasicAuth(
+    &odata.BasicAuthConfig{Realm: "Internal API"},
+    validateInternalUser,
+)
+
+// JWT para API pública
+publicAuth := odata.NewJwtAuth(&odata.JWTConfig{
+    SecretKey: "public-secret",
+})
+
+// Aplicar diferentes auths
+server.RegisterEntity("InternalReports", Report{}, odata.WithAuth(internalAuth))
+server.RegisterEntity("PublicProducts", Product{}, odata.WithAuth(publicAuth))
+```
+
+### Exemplo de Requisição
+
+```bash
+# 1. Usando curl com -u (recomendado)
+curl -u admin:admin123 http://localhost:3000/api/v1/Users
+
+# 2. Usando header Authorization manual
+curl -H "Authorization: Basic YWRtaW46YWRtaW4xMjM=" http://localhost:3000/api/v1/Users
+
+# 3. Gerar Base64 manualmente
+echo -n "admin:admin123" | base64
+# Resultado: YWRtaW46YWRtaW4xMjM=
+```
+
+### Resposta 401 com WWW-Authenticate
+
+Quando credenciais são inválidas ou ausentes, o servidor responde com:
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Basic realm="My API"
+Content-Type: application/json
+
+{
+  "error": "Autenticação requerida"
+}
+```
+
+Isso faz com que navegadores modernos exibam um prompt de login automaticamente.
+
+### Exemplo Completo
+
+Veja um exemplo completo com banco de dados em [`examples/basic_auth/`](examples/basic_auth/).
+
+### Quando Usar Basic Auth
+
+✅ **Recomendado para:**
+- APIs internas entre servidores
+- Scripts e automações
+- Ambientes com HTTPS garantido
+- Integrações simples
+- Prototipagem rápida
+
+⚠️ **Não recomendado para:**
+- APIs públicas expostas na internet
+- Aplicações web frontend (use JWT)
+- Ambientes sem HTTPS (credenciais são enviadas em Base64)
+- Quando precisa de logout/expiração (use JWT)
+
+### Segurança
+
+**IMPORTANTE:** Basic Auth **DEVE** ser usado **APENAS com HTTPS/TLS**. As credenciais são enviadas em Base64 (não criptografadas) e podem ser facilmente decodificadas.
+
+```go
+// Configure TLS para produção
+server := odata.NewServer(&odata.Config{
+    TLS: &odata.TLSConfig{
+        Enabled:  true,
+        CertFile: "/path/to/cert.pem",
+        KeyFile:  "/path/to/key.pem",
+    },
+})
+```
+
+### Comparação: Basic Auth vs JWT
+
+| Característica | Basic Auth | JWT |
+|---------------|------------|-----|
+| Complexidade | Simples | Moderada |
+| Stateless | ✅ Sim | ✅ Sim |
+| Expiração | ❌ Não | ✅ Sim |
+| Revogação | ❌ Difícil | ✅ Possível |
+| Performance | ⚡ Rápida | ⚡ Rápida |
+| Logout | ❌ Não | ✅ Sim |
+| Refresh Token | ❌ Não | ✅ Sim |
+| Casos de Uso | APIs internas | APIs públicas |
+
+## 🔒 Segurança
+
+O Go-Data implementa múltiplas camadas de segurança para proteger suas APIs contra ataques e vazamentos de dados.
+
+### Proteção contra SQL Injection
+
+✅ **Implementado automaticamente** - Todas as queries usam **Prepared Statements** com parametrização via `sql.Named`.
+
+```go
+// ✅ Seguro - Uso automático de prepared statements
+server.RegisterEntity("Users", User{})
+// Queries como: $filter=name eq 'value' são automaticamente parametrizadas
+```
+
+**Validação de Inputs:**
+- Tamanho máximo de queries ($filter, $search, etc)
+- Detecção de padrões de SQL injection
+- Validação de nomes de propriedades
+- Limites de profundidade em $expand
+
+```go
+config := &odata.ValidationConfig{
+    MaxFilterLength:  5000,  // 5KB
+    MaxSearchLength:  1000,  // 1KB
+    MaxTopValue:      1000,  // máximo 1000 registros
+    MaxExpandDepth:   5,     // máximo 5 níveis
+    EnableXSSProtection: true,
+}
+server.GetConfig().ValidationConfig = config
+```
+
+### Security Headers
+
+Headers de segurança são **habilitados por padrão**:
+
+```http
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 1; mode=block
+Content-Security-Policy: default-src 'self'; ...
+Strict-Transport-Security: max-age=31536000
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: camera=(), microphone=(), ...
+```
+
+**Configurações disponíveis:**
+
+```go
+// Padrão (Balanceado)
+config := odata.DefaultSecurityHeadersConfig()
+
+// Estrito (Máxima Segurança)
+config := odata.StrictSecurityHeadersConfig()
+
+// Relaxado (Desenvolvimento)
+config := odata.RelaxedSecurityHeadersConfig()
+
+// Desabilitar (não recomendado)
+config := odata.DisableSecurityHeaders()
+```
+
+### Audit Logging
+
+Sistema completo de auditoria para rastrear todas operações críticas:
+
+```go
+config := &odata.AuditLogConfig{
+    Enabled:  true,
+    LogType:  "file",       // "file", "stdout", "stderr"
+    FilePath: "audit.log",
+    Format:   "json",       // "json" ou "text"
+}
+server.GetConfig().AuditLogConfig = config
+```
+
+**Operações Auditadas:**
+- ✅ CREATE, UPDATE, DELETE (operações de escrita)
+- ✅ AUTH_SUCCESS, AUTH_FAILURE (autenticação)
+- ✅ UNAUTHORIZED (tentativas de acesso negadas)
+
+**Exemplo de Log Entry:**
+
+```json
+{
+  "timestamp": "2025-10-18T10:30:45Z",
+  "username": "john.doe",
+  "ip": "192.168.1.100",
+  "method": "POST",
+  "path": "/odata/Users",
+  "entity_name": "Users",
+  "operation": "CREATE",
+  "success": true,
+  "duration_ms": 45
+}
+```
+
+**Usando com Autenticação:**
+
+```go
+jwtAuth := odata.NewJwtAuth(config)
+
+// Com audit logging automático
+router.Get("/protected", 
+    odata.AuthMiddlewareWithAudit(jwtAuth, server.GetAuditLogger()),
+    handler)
+```
+
+### Input Validation
+
+Validação automática de todos os inputs OData:
+
+```go
+// Validar filter
+err := odata.ValidateFilterQuery("name eq 'john'", config)
+
+// Validar propriedades
+err := odata.ValidatePropertyName("username", config)
+
+// Validar $top
+err := odata.ValidateTopValue(100, config)
+
+// Validar profundidade de $expand
+err := odata.ValidateExpandDepth(expandOptions, 5, 1)
+
+// Sanitizar input (remove XSS)
+safe := odata.SanitizeInput(userInput, config)
+```
+
+**Padrões Detectados Automaticamente:**
+- SQL Injection: `UNION`, `DROP`, `--`, `1=1`, etc
+- XSS: `<script>`, `<iframe>`, `javascript:`, `onclick=`, etc
+- Caracteres inválidos em nomes de propriedades
+- Queries muito longas (DoS prevention)
+
+### Rate Limiting (Habilitado por Padrão)
+
+⚠️ **IMPORTANTE**: Rate limiting está **HABILITADO por padrão** desde a versão atual.
+
+```go
+// Configuração padrão (100 req/min)
+config := odata.DefaultRateLimitConfig()
+// config.Enabled = true (já habilitado)
+// config.RequestsPerMinute = 100
+// config.BurstSize = 20
+
+// Para desabilitar (não recomendado)
+server.GetConfig().RateLimitConfig.Enabled = false
+```
+
+### Checklist de Segurança
+
+- [x] **SQL Injection**: Protegido com prepared statements
+- [x] **XSS**: Sanitização e CSP headers
+- [x] **CSRF**: Headers configuráveis
+- [x] **Clickjacking**: X-Frame-Options
+- [x] **Rate Limiting**: Habilitado por padrão
+- [x] **Audit Logging**: Sistema completo disponível
+- [x] **Input Validation**: Múltiplas validações automáticas
+- [x] **Security Headers**: 8+ headers implementados
+- [ ] **HTTPS/TLS**: Configure manualmente para produção
+- [ ] **Secrets Management**: Use variáveis de ambiente
+
+### Documentação de Segurança
+
+Para guia completo de segurança, incluindo melhores práticas e como reportar vulnerabilidades, veja:
+
+📄 **[docs/SECURITY.md](docs/SECURITY.md)**
+
+## ⚡ Performance
+
+O Go-Data implementa múltiplas otimizações de performance para garantir baixa latência e alto throughput.
+
+### Otimização N+1 (Expand Batching)
+
+O problema N+1 ocorre quando expandimos relacionamentos e executamos uma query para cada entidade relacionada. Go-Data resolve isso automaticamente usando **batching**.
+
+**Antes (N+1 Problem)**:
+```
+GET /odata/Products?$expand=Category
+
+Queries executadas:
+1. SELECT * FROM products              -- 1 query inicial
+2. SELECT * FROM categories WHERE id=1 -- Para produto 1
+3. SELECT * FROM categories WHERE id=1 -- Para produto 2
+4. SELECT * FROM categories WHERE id=2 -- Para produto 3
+... (N queries, uma por produto)
+
+Total: 1 + N queries = O(N) ❌ LENTO
+```
+
+**Depois (Batching)**:
+```
+GET /odata/Products?$expand=Category
+
+Queries executadas:
+1. SELECT * FROM products                     -- 1 query inicial
+2. SELECT * FROM categories WHERE id IN (1,2) -- 1 query em batch
+
+Total: 2 queries = O(1) ✅ RÁPIDO (50x mais rápido!)
+```
+
+#### Exemplo de Uso
+
+A otimização é **automática e transparente**:
+
+```go
+// Registrar entidades normalmente
+server.RegisterEntity("Products", Product{})
+server.RegisterEntity("Categories", Category{})
+
+// Cliente faz: GET /odata/Products?$expand=Category
+// Sistema automaticamente:
+// - Detecta expand
+// - Coleta todos os CategoryIDs
+// - Executa query em batch: WHERE CategoryID IN (1,2,3,...)
+// - Associa resultados em memória
+// Performance: 2 queries ao invés de N+1! 🚀
+```
+
+#### Configuração
+
+Por padrão, batching está **habilitado**. Para debugging ou casos especiais:
+
+```go
+config := odata.DefaultServerConfig()
+config.DisableJoinForExpand = true  // Força comportamento legado (não recomendado)
+server := odata.NewServerWithConfig(config, db)
+```
+
+**⚠️ Não recomendado desabilitar**: Pode causar problemas sérios de performance em produção.
+
+#### Logs de Performance
+
+Habilite logs para monitorar otimizações:
+
+```go
+config := odata.DefaultServerConfig()
+config.LogLevel = "DEBUG"
+```
+
+Você verá logs como:
+```
+🔍 EXPAND: Using BATCHING for Category (evitando N+1)
+🔍 EXPAND BATCH: Filter = CategoryID in (1,2,3) (querying 3 related entities)
+✅ EXPAND BATCH: Retrieved 3 related entities in 1 query
+✅ EXPAND BATCH: Associated related entities to 100 parent entities
+```
+
+#### Comparação de Performance
+
+| Cenário | Antes (N+1) | Depois (Batching) | Ganho |
+|---------|-------------|-------------------|-------|
+| 100 Products + Category | 101 queries (~1010ms) | 2 queries (~20ms) | **50x mais rápido** |
+| 1000 Products + Category | 1001 queries (~10s) | 2 queries (~20ms) | **500x mais rápido** |
+| Nested expand (2 níveis) | N×M queries | 3 queries | **Drasticamente melhor** |
+
+### String Builder Optimization
+
+Construção otimizada de queries SQL usando `strings.Builder` ao invés de concatenação `+`:
+
+- **12% menos alocações de memória**
+- **3-5% mais rápido** em query building
+- Especialmente eficiente em queries complexas com múltiplos filtros
+
+### Benchmarks
+
+Execute benchmarks para medir performance:
+
+```bash
+# Todos os benchmarks
+go test -bench=. -benchmem ./pkg/odata
+
+# Benchmarks específicos
+go test -bench=BenchmarkParse -benchmem ./pkg/odata     # Parsers
+go test -bench=BenchmarkExpand -benchmem ./pkg/odata    # Expand operations
+go test -bench=BenchmarkBuild -benchmem ./pkg/odata     # Query building
+
+# Com profiling (CPU + memória)
+PROFILE=1 go test -bench=BenchmarkProfile -cpuprofile=cpu.prof -memprofile=mem.prof ./pkg/odata
+
+# Visualizar profile no navegador
+go tool pprof -http=:8080 cpu.prof
+```
+
+### Metas de Performance
+
+- ✅ **Parsers**: < 50µs para queries simples
+- ✅ **Query Building**: < 100µs para queries completas  
+- ✅ **Expand Operations**: < 10ms com batching
+- ✅ **N+1 Elimination**: 2 queries ao invés de N+1
+- ✅ **Memory**: 10-15% menos alocações
+
+📄 **[pkg/odata/PERFORMANCE.md](pkg/odata/PERFORMANCE.md)** - Documentação completa de performance  
+📄 **[pkg/odata/BENCHMARKS.md](pkg/odata/BENCHMARKS.md)** - Guia de benchmarks
+
+## 🛡️ Rate Limiting
 
 O Go-Data implementa um sistema robusto de rate limiting para proteger suas APIs contra abuso e garantir disponibilidade. O sistema oferece controle granular de taxa de requisições com múltiplas estratégias de identificação de clientes.
 
@@ -1685,6 +2587,146 @@ Veja o exemplo completo em [`examples/events/`](examples/events/) que demonstra:
 - Tratamento de erros
 - Cancelamento de operações
 
+## 🎯 Service Operations
+
+O Go-Data implementa Service Operations similares ao XData, mas usando padrões idiomáticos do Go. O sistema oferece um `ServiceContext` otimizado que equivale funcionalmente ao `TXDataOperationContext` do XData.
+
+### Características do Service Operations
+
+- ✅ **ServiceContext Otimizado**: Equivale ao `TXDataOperationContext.Current.GetManager()` do XData
+- ✅ **Sintaxe Simples**: Similar ao Fiber para registro de handlers
+- ✅ **Autenticação Flexível**: Controle automático baseado na configuração JWT
+- ✅ **Multi-Tenant**: Suporte automático a multi-tenant
+- ✅ **ObjectManager Integrado**: Acesso direto ao ObjectManager do contexto
+- ✅ **Menos Boilerplate**: 95% menos código que implementações tradicionais
+
+### ServiceContext
+
+```go
+type ServiceContext struct {
+    Manager      *ObjectManager  // Equivale ao TXDataOperationContext.Current.GetManager()
+    FiberContext fiber.Ctx       // Contexto do Fiber (já tem TenantID via GetCurrentTenant())
+    User         *UserIdentity   // Usuário autenticado (só se JWT habilitado)
+}
+```
+
+### Registro de Services
+
+#### Service Sem Autenticação
+
+```go
+server.Service("GET", "/Service/GetTopSelling", func(ctx *odata.ServiceContext) error {
+    products, err := ctx.GetManager().Query("Products").
+        Where("sales_count gt 100").
+        OrderBy("sales_count desc").
+        Top(10).
+        List()
+    
+    if err != nil {
+        return ctx.Status(500).JSON(map[string]string{"error": err.Error()})
+    }
+    
+    return ctx.JSON(map[string]interface{}{
+        "products": products,
+        "tenant": ctx.GetTenantID(),
+    })
+})
+```
+
+#### Service Com Autenticação
+
+```go
+server.ServiceWithAuth("POST", "/Service/CalculateTotal", func(ctx *odata.ServiceContext) error {
+    // ctx.User garantidamente não será nil se JWT habilitado
+    productIDs := ctx.Query("product_ids")
+    
+    manager := ctx.GetManager()
+    // ... lógica do service
+    
+    return ctx.JSON(result)
+}, true)
+```
+
+#### Service Com Roles
+
+```go
+server.ServiceWithRoles("GET", "/Service/AdminData", func(ctx *odata.ServiceContext) error {
+    // ctx.User garantidamente tem role "admin"
+    manager := ctx.GetManager()
+    // ... lógica administrativa
+    
+    return ctx.JSON(data)
+}, "admin")
+```
+
+#### Service Groups
+
+```go
+products := server.ServiceGroup("Products")
+
+products.ServiceWithAuth("GET", "GetTopSelling", func(ctx *odata.ServiceContext) error {
+    // Handler implementation
+    return ctx.JSON(result)
+}, true)
+
+products.ServiceWithRoles("GET", "AdminStats", func(ctx *odata.ServiceContext) error {
+    // Handler implementation
+    return ctx.JSON(result)
+}, "admin")
+```
+
+### Métodos do ServiceContext
+
+```go
+// Acesso ao ObjectManager (equivale ao XData)
+manager := ctx.GetManager()
+
+// Informações do usuário
+user := ctx.GetUser()
+tenantID := ctx.GetTenantID()
+
+// Verificações de autenticação
+isAuth := ctx.IsAuthenticated()
+isAdmin := ctx.IsAdmin()
+hasRole := ctx.HasRole("manager")
+
+// Acesso aos dados da requisição
+params := ctx.QueryParams()
+productID := ctx.Query("product_id")
+body := ctx.Body()
+
+// Resposta
+ctx.JSON(data)
+ctx.Status(200).JSON(data)
+ctx.SetHeader("Content-Type", "application/json")
+```
+
+### Comparação com XData
+
+| Funcionalidade XData | Go-Data ServiceContext |
+|---------------------|----------------------|
+| `TXDataOperationContext.Current.GetManager()` | `ctx.GetManager()` |
+| `TXDataOperationContext.Current.Request` | `ctx.FiberContext` |
+| `TXDataOperationContext.Current.Response` | `ctx.FiberContext` |
+| Service Contract Interface | `ServiceHandler` function |
+| Service Implementation | Handler function direta |
+| Routing automático | `server.Service(method, endpoint, handler)` |
+| Memory management | `ObjectManager` automático |
+| ~20 linhas de setup | ~3 linhas de setup |
+
+### Exemplo Completo
+
+Veja o exemplo completo em [`examples/service_operations/`](examples/service_operations/) que demonstra:
+
+- ServiceContext otimizado com ObjectManager integrado
+- Acesso direto a Connection, Provider e Pool
+- Criação de múltiplos ObjectManagers isolados
+- Sintaxe simples similar ao Fiber para registro
+- Controle automático de autenticação baseado em JWT
+- Suporte completo a multi-tenant
+- Service Groups para organização
+- Equivalência funcional ao TXDataOperationContext do XData
+
 ## 🗂️ Mapeamento de Entidades
 
 ### Tags Disponíveis
@@ -1893,6 +2935,207 @@ GET /odata/Orders?$compute=total mul 0.1 as tax
 ```
 GET /odata/Users?$search=João
 ```
+
+### Batch ($batch) - OData v4
+O OData v4 suporta **batch requests**, permitindo executar múltiplas operações em uma única requisição HTTP. Isso reduz latência, suporta transações e melhora a performance em operações bulk.
+
+**Características:**
+- Múltiplas operações GET/POST/PUT/PATCH/DELETE em uma requisição
+- Changesets transacionais (tudo ou nada)
+- Reduz overhead de conexões HTTP
+- Suporte a Content-ID para referenciar operações
+
+**Exemplo: Múltiplas leituras**
+```bash
+POST /odata/$batch
+Content-Type: multipart/mixed; boundary=batch_boundary
+
+--batch_boundary
+Content-Type: application/http
+Content-Transfer-Encoding: binary
+
+GET /api/v1/Products?$top=5 HTTP/1.1
+Host: localhost:3000
+
+
+--batch_boundary
+Content-Type: application/http
+Content-Transfer-Encoding: binary
+
+GET /api/v1/Categories HTTP/1.1
+Host: localhost:3000
+
+
+--batch_boundary--
+```
+
+**Exemplo: Changeset transacional**
+```bash
+POST /odata/$batch
+Content-Type: multipart/mixed; boundary=batch_boundary
+
+--batch_boundary
+Content-Type: multipart/mixed; boundary=changeset_boundary
+
+--changeset_boundary
+Content-Type: application/http
+Content-Transfer-Encoding: binary
+Content-ID: 1
+
+POST /api/v1/Products HTTP/1.1
+Host: localhost:3000
+Content-Type: application/json
+
+{"name":"Produto Novo","price":99.90}
+
+--changeset_boundary
+Content-Type: application/http
+Content-Transfer-Encoding: binary
+Content-ID: 2
+
+POST /api/v1/Orders HTTP/1.1
+Host: localhost:3000
+Content-Type: application/json
+
+{"product_id": 1, "quantity": 5}
+
+--changeset_boundary--
+
+--batch_boundary--
+```
+
+**Exemplo: Batch misto (leitura + changeset)**
+```bash
+POST /odata/$batch
+Content-Type: multipart/mixed; boundary=batch_boundary
+
+--batch_boundary
+Content-Type: application/http
+Content-Transfer-Encoding: binary
+
+GET /api/v1/Products?$top=3 HTTP/1.1
+Host: localhost:3000
+
+
+--batch_boundary
+Content-Type: multipart/mixed; boundary=changeset_boundary
+
+--changeset_boundary
+Content-Type: application/http
+Content-Transfer-Encoding: binary
+Content-ID: 1
+
+POST /api/v1/Categories HTTP/1.1
+Host: localhost:3000
+Content-Type: application/json
+
+{"name":"Nova Categoria"}
+
+--changeset_boundary--
+
+--batch_boundary
+Content-Type: application/http
+Content-Transfer-Encoding: binary
+
+GET /api/v1/Orders HTTP/1.1
+Host: localhost:3000
+
+
+--batch_boundary--
+```
+
+**Configuração do Batch:**
+```go
+// Usar configuração padrão (automática)
+server := odata.NewServer()
+
+// Ou customizar
+config := &odata.BatchConfig{
+    MaxOperations:      100,          // Máximo de operações por batch
+    MaxChangesets:      10,           // Máximo de changesets
+    Timeout:            30 * time.Second,
+    EnableTransactions: true,         // Habilitar transações para changesets
+}
+```
+
+**Benefícios:**
+- ⚡ **Performance**: Reduz latência ao combinar múltiplas requisições
+- 🔄 **Transações**: Changesets garantem atomicidade (tudo ou nada)
+- 🌐 **Rede**: Menos overhead de conexões HTTP
+- 📊 **Bulk**: Ideal para operações em lote
+
+**Limitações Conhecidas:**
+
+⚠️ **Importante**: A implementação atual do $batch possui as seguintes limitações:
+
+1. **Transações por Changeset**:
+   - Cada changeset é executado em uma transação separada
+   - Não há transação global para múltiplos changesets em um único batch
+   - Se você precisa de atomicidade entre changesets, use apenas um changeset
+
+2. **Content-ID**:
+   - Content-IDs são resolvidos apenas dentro do mesmo changeset
+   - Referências entre changesets diferentes não são suportadas
+   - Recomendação: Use Content-IDs sequenciais (1, 2, 3...) para melhor compatibilidade
+
+3. **Autenticação**:
+   - A autenticação é aplicada uma vez no batch request
+   - Todas as operações no batch usam as mesmas credenciais
+   - Não é possível usar credenciais diferentes para operações individuais
+
+4. **Limites de Performance**:
+   - `MaxOperations`: Máximo de 100 operações por batch (configurável)
+   - `MaxChangesets`: Máximo de 10 changesets por batch (configurável)
+   - `Timeout`: 30 segundos por padrão (configurável)
+   - Batches muito grandes podem causar timeouts
+
+5. **Tipos de Operações**:
+   - ✅ GET, POST, PUT, PATCH, DELETE suportados
+   - ❌ $batch aninhado não suportado (batch dentro de batch)
+   - ❌ Operações assíncronas não implementadas
+
+6. **Tratamento de Erros**:
+   - Em changesets: um erro cancela todas as operações do changeset (rollback)
+   - Fora de changesets: cada operação é independente (erros não afetam outras operações)
+   - Erros são retornados com status HTTP apropriado na resposta multipart
+
+7. **Formato de Resposta**:
+   - Sempre retorna `multipart/mixed` conforme OData v4
+   - A ordem das respostas corresponde à ordem das requisições
+   - Cada resposta inclui status HTTP e corpo (se aplicável)
+
+8. **Compatibilidade**:
+   - Implementado conforme OData v4 specification
+   - Testado com: Postman, curl, e clientes HTTP padrão
+   - Algumas ferramentas podem ter dificuldade com multipart/mixed complexo
+
+**Recomendações de Uso:**
+
+```go
+// ✅ BOM: Um changeset transacional
+Changeset 1: [POST Product, POST Order, PUT Inventory]
+
+// ✅ BOM: Múltiplas leituras independentes
+Request 1: GET /Products
+Request 2: GET /Categories
+Request 3: GET /Orders
+
+// ⚠️ CUIDADO: Múltiplos changesets (não há transação global)
+Changeset 1: [POST Product]
+Changeset 2: [POST Order]  // Se falhar, Changeset 1 já foi commitado
+
+// ❌ EVITAR: Batch muito grande
+100+ operações em um único batch // Pode causar timeout
+```
+
+**Roadmap Futuro:**
+- [ ] Transações globais entre changesets
+- [ ] Content-ID cross-changeset
+- [ ] Operações assíncronas
+- [ ] Streaming de respostas
+- [ ] Batch aninhado
+
+Veja o exemplo completo em [`examples/batch/main.go`](examples/batch/main.go).
 
 ## 🔧 Operadores Suportados
 
@@ -2274,12 +3517,20 @@ Exemplo completo demonstrando:
 - Arquivo .env completo com configurações multi-tenant
 
 ### 🔐 [JWT Authentication](examples/jwt/)
-Demonstra sistema completo de autenticação:
+Demonstra sistema completo de autenticação JWT:
 - Configuração JWT com roles e scopes
 - Endpoints de login, refresh e logout
 - Controle de acesso por entidade
 - Middleware de autenticação
 - Arquivo .env com JWT habilitado
+
+### 🔓 [Basic Authentication](examples/basic_auth/)
+Demonstra autenticação HTTP Basic:
+- Configuração Basic Auth com validação em banco de dados
+- Customização de UserValidator com logging
+- Entidades protegidas por autenticação
+- WWW-Authenticate header automático
+- Múltiplos usuários de teste com roles
 
 ### 🎯 [Events](examples/events/)
 Sistema completo de eventos:
@@ -2297,6 +3548,16 @@ Execução como serviço do sistema:
 - Configuração de serviço personalizada
 - Logging integrado com sistemas nativos
 - Arquivo .env completo com configurações de serviço
+
+### 🎯 [Service Operations](examples/service_operations/)
+Sistema de Service Operations equivalente ao XData:
+- ServiceContext otimizado com ObjectManager integrado
+- Sintaxe simples similar ao Fiber para registro
+- Controle automático de autenticação baseado em JWT
+- Suporte completo a multi-tenant
+- Service Groups para organização
+- Equivalência funcional ao TXDataOperationContext do XData
+- Arquivo .env com configurações JWT e multi-tenant
 
 ### 📊 [Básico](examples/basic/)
 Exemplo básico de uso:

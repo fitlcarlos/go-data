@@ -66,6 +66,14 @@ func (p *BaseProvider) GetDriverName() string {
 	return p.driverName
 }
 
+// BeginTx inicia uma nova transação
+func (p *BaseProvider) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	if p.db == nil {
+		return nil, fmt.Errorf("database connection is nil")
+	}
+	return p.db.BeginTx(ctx, opts)
+}
+
 // Close fecha a conexão com o banco
 func (p *BaseProvider) Close() error {
 	if p.db != nil {

@@ -138,6 +138,7 @@ type DatabaseProvider interface {
 	Close() error
 	GetConnection() *sql.DB
 	GetDriverName() string
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 	BuildSelectQuery(entity EntityMetadata, options QueryOptions) (string, []interface{}, error)
 	BuildInsertQuery(entity EntityMetadata, data map[string]interface{}) (string, []interface{}, error)
 	BuildUpdateQuery(entity EntityMetadata, data map[string]interface{}, keyValues map[string]interface{}) (string, []interface{}, error)
@@ -597,4 +598,18 @@ func InvalidFilterError(filter string) *ODataError {
 		fmt.Sprintf("Invalid filter expression: %s", filter),
 		"$filter",
 	)
+}
+
+// ContextAuthenticator interface para autenticação com acesso ao contexto enriquecido
+// Pode ser implementada por qualquer mecanismo de autenticação (JWT, Basic Auth, API Key, etc)
+// Fornece acesso ao ObjectManager, Connection, Provider e Pool durante autenticação e refresh
+type ContextAuthenticator interface {
+	// AuthenticateWithContext autentica usuário durante login
+	// ctx fornece acesso ao banco de dados, IP do cliente, headers, etc
+	AuthenticateWithContext(ctx *AuthContext, username, password string) (*UserIdentity, error)
+
+	// RefreshToken recarrega/valida dados do usuário durante refresh token
+	// Permite validar se usuário ainda está ativo e atualizar roles/permissions
+	// O contexto está disponível caso você queira validar no banco de dados
+	RefreshToken(ctx *AuthContext, username string) (*UserIdentity, error)
 }

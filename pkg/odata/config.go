@@ -199,13 +199,13 @@ func (c *EnvConfig) parseVariables() {
 	c.DBPassword = c.getEnvString("DB_PASSWORD", "")
 	c.DBSchema = c.getEnvString("DB_SCHEMA", "")
 	c.DBConnectionString = c.getEnvString("DB_CONNECTION_STRING", "")
-	c.DBMaxOpenConns = c.getEnvInt("DB_MAX_OPEN_CONNS", 25)
-	c.DBMaxIdleConns = c.getEnvInt("DB_MAX_IDLE_CONNS", 5)
-	c.DBConnMaxLifetime = c.getEnvDuration("DB_CONN_MAX_LIFETIME", 10*time.Minute)
+	c.DBMaxOpenConns = c.getEnvInt("DB_MAX_OPEN_CONNS", DefaultMaxConnections)
+	c.DBMaxIdleConns = c.getEnvInt("DB_MAX_IDLE_CONNS", DefaultMinConnections)
+	c.DBConnMaxLifetime = c.getEnvDuration("DB_CONN_MAX_LIFETIME", DefaultMaxIdleTime)
 
 	// Configurações do servidor OData
 	c.ServerHost = c.getEnvString("SERVER_HOST", "localhost")
-	c.ServerPort = c.getEnvInt("SERVER_PORT", 9090)
+	c.ServerPort = c.getEnvInt("SERVER_PORT", 8080)
 	c.ServerRoutePrefix = c.getEnvString("SERVER_ROUTE_PREFIX", "/odata")
 	c.ServerEnableCORS = c.getEnvBool("SERVER_ENABLE_CORS", true)
 	c.ServerAllowedOrigins = c.getEnvStringSlice("SERVER_ALLOWED_ORIGINS", []string{"*"})
@@ -240,9 +240,9 @@ func (c *EnvConfig) parseVariables() {
 
 	// Configurações de Rate Limit
 	c.RateLimitEnabled = c.getEnvBool("RATE_LIMIT_ENABLED", false)
-	c.RateLimitRequestsPerMinute = c.getEnvInt("RATE_LIMIT_REQUESTS_PER_MINUTE", 60)
-	c.RateLimitBurstSize = c.getEnvInt("RATE_LIMIT_BURST_SIZE", 10)
-	c.RateLimitWindowSize = c.getEnvDuration("RATE_LIMIT_WINDOW_SIZE", time.Minute)
+	c.RateLimitRequestsPerMinute = c.getEnvInt("RATE_LIMIT_REQUESTS_PER_MINUTE", DefaultRateLimitPerMinute)
+	c.RateLimitBurstSize = c.getEnvInt("RATE_LIMIT_BURST_SIZE", DefaultRateLimitBurstSize)
+	c.RateLimitWindowSize = c.getEnvDuration("RATE_LIMIT_WINDOW_SIZE", DefaultRateLimitWindow)
 	c.RateLimitHeaders = c.getEnvBool("RATE_LIMIT_HEADERS", true)
 }
 

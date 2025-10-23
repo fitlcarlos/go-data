@@ -15,8 +15,8 @@ type GoDataSkipQuery int
 
 // Constantes para limites padrão
 const (
-	DefaultTopLimit  = 10000
-	DefaultSkipLimit = 1000000
+	DefaultTopLimit  = DefaultMaxTopValue  // Usa constante centralizada
+	DefaultSkipLimit = DefaultMaxSkipValue // Usa constante centralizada
 	MinTopValue      = 0
 	MinSkipValue     = 0
 )
@@ -204,7 +204,7 @@ func ValidateTopSkipCombination(top *GoDataTopQuery, skip *GoDataSkipQuery) erro
 	}
 
 	// Verifica se a combinação pode resultar em muitos dados
-	if skipValue > 100000 && topValue > 1000 {
+	if skipValue > DefaultMaxSkipValue && topValue > DefaultMaxTopValue {
 		return fmt.Errorf("combination of $skip (%d) and $top (%d) may result in excessive data", skipValue, topValue)
 	}
 
@@ -334,7 +334,7 @@ func GetTopSkipComplexity(top *GoDataTopQuery, skip *GoDataSkipQuery) int {
 
 	if skip != nil {
 		complexity += 1
-		if int(*skip) > 10000 {
+		if int(*skip) > DefaultMaxTopValue {
 			complexity += 2 // Skip grande adiciona mais complexidade
 		}
 	}

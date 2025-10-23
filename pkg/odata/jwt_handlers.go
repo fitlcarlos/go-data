@@ -24,14 +24,8 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
-// UserAuthenticator interface para autenticação de usuários
-type UserAuthenticator interface {
-	Authenticate(username, password string) (*UserIdentity, error)
-	GetUserByUsername(username string) (*UserIdentity, error)
-}
-
 // SetupAuthRoutes configura as rotas de autenticação
-func (s *Server) SetupAuthRoutes(authenticator UserAuthenticator) {
+func (s *Server) SetupAuthRoutes(authenticator ContextAuthenticator) {
 	if !s.config.EnableJWT {
 		s.logger.Printf("JWT não habilitado, rotas de autenticação não serão configuradas")
 		return
@@ -43,7 +37,7 @@ func (s *Server) SetupAuthRoutes(authenticator UserAuthenticator) {
 	authGroup.Post("/login", s.handleLogin(authenticator))
 
 	// Rota de refresh token
-	authGroup.Post("/refresh", s.handleRefresh())
+	authGroup.Post("/refresh", s.handleRefresh(authenticator))
 
 	// Rota de logout
 	authGroup.Post("/logout", s.handleLogout())
@@ -55,7 +49,7 @@ func (s *Server) SetupAuthRoutes(authenticator UserAuthenticator) {
 }
 
 // handleLogin handler para login
-func (s *Server) handleLogin(authenticator UserAuthenticator) fiber.Handler {
+func (s *Server) handleLogin(authenticator ContextAuthenticator) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		var req LoginRequest
 		if err := c.Bind().JSON(&req); err != nil {
@@ -66,8 +60,10 @@ func (s *Server) handleLogin(authenticator UserAuthenticator) fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "Username e password são obrigatórios")
 		}
 
-		// Autenticar usuário
-		user, err := authenticator.Authenticate(req.Username, req.Password)
+		// Autenticar usando ContextAuthenticator
+		authCtx := s.createAuthContext(c)
+		user, err := authenticator.AuthenticateWithContext(authCtx, req.Username, req.Password)
+
 		if err != nil {
 			return fiber.NewError(fiber.StatusUnauthorized, "Credenciais inválidas")
 		}
@@ -96,7 +92,7 @@ func (s *Server) handleLogin(authenticator UserAuthenticator) fiber.Handler {
 }
 
 // handleRefresh handler para refresh token
-func (s *Server) handleRefresh() fiber.Handler {
+func (s *Server) handleRefresh(authenticator ContextAuthenticator) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		var req RefreshRequest
 		if err := c.Bind().JSON(&req); err != nil {
@@ -107,14 +103,27 @@ func (s *Server) handleRefresh() fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "Refresh token é obrigatório")
 		}
 
-		// Gerar novo token de acesso
-		newAccessToken, err := s.jwtService.RefreshToken(req.RefreshToken)
+		// Validar refresh token e extrair username
+		claims, err := s.jwtService.ValidateToken(req.RefreshToken)
 		if err != nil {
 			return fiber.NewError(fiber.StatusUnauthorized, "Refresh token inválido")
 		}
 
+		// Chamar RefreshToken do authenticator (contexto disponível se necessário)
+		authCtx := s.createAuthContext(c)
+		user, err := authenticator.RefreshToken(authCtx, claims.Username)
+		if err != nil {
+			return fiber.NewError(fiber.StatusUnauthorized, "Não foi possível renovar token")
+		}
+
+		// Gerar novo access token
+		accessToken, err := s.jwtService.GenerateToken(user)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Erro ao gerar token")
+		}
+
 		response := map[string]interface{}{
-			"access_token": newAccessToken,
+			"access_token": accessToken,
 			"token_type":   "Bearer",
 			"expires_in":   int64(s.jwtService.config.ExpiresIn.Seconds()),
 		}
@@ -163,66 +172,4 @@ func (s *Server) GetEntityAuth(entityName string) (EntityAuthConfig, bool) {
 
 	config, exists := s.entityAuth[entityName]
 	return config, exists
-}
-
-// RequireEntityAuth aplica middleware de autenticação baseado na configuração da entidade
-func (s *Server) RequireEntityAuth(entityName string) fiber.Handler {
-	return func(c fiber.Ctx) error {
-		// Se JWT não estiver habilitado, pular verificação
-		if !s.config.EnableJWT {
-			return c.Next()
-		}
-
-		// Obter configuração da entidade
-		authConfig, exists := s.GetEntityAuth(entityName)
-		if !exists {
-			// Se não há configuração específica, usar configuração global
-			if s.config.RequireAuth {
-				return RequireAuth()(c)
-			}
-			return c.Next()
-		}
-
-		// Verificar se autenticação é necessária
-		if authConfig.RequireAuth {
-			user := GetCurrentUser(c)
-			if user == nil {
-				return fiber.NewError(fiber.StatusUnauthorized, "Autenticação requerida para acessar "+entityName)
-			}
-
-			// Verificar se é admin
-			if authConfig.RequireAdmin && !user.IsAdmin() {
-				return fiber.NewError(fiber.StatusForbidden, "Privilégios de administrador requeridos para acessar "+entityName)
-			}
-
-			// Verificar roles
-			if len(authConfig.RequiredRoles) > 0 && !user.HasAnyRole(authConfig.RequiredRoles...) {
-				return fiber.NewError(fiber.StatusForbidden, "Role necessária para acessar "+entityName)
-			}
-
-			// Verificar scopes
-			if len(authConfig.RequiredScopes) > 0 && !user.HasAnyScope(authConfig.RequiredScopes...) {
-				return fiber.NewError(fiber.StatusForbidden, "Scope necessário para acessar "+entityName)
-			}
-		}
-
-		return c.Next()
-	}
-}
-
-// CheckEntityReadOnly verifica se a entidade é apenas leitura
-func (s *Server) CheckEntityReadOnly(entityName string, method string) fiber.Handler {
-	return func(c fiber.Ctx) error {
-		authConfig, exists := s.GetEntityAuth(entityName)
-		if !exists {
-			return c.Next()
-		}
-
-		// Se é read-only e método não é GET, bloquear
-		if authConfig.ReadOnly && method != "GET" {
-			return fiber.NewError(fiber.StatusForbidden, "Entidade "+entityName+" é apenas leitura")
-		}
-
-		return c.Next()
-	}
 }
