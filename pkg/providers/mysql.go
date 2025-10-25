@@ -41,9 +41,6 @@ func NewMySQLProvider(connection ...*sql.DB) *MySQLProvider {
 			}
 		}
 
-		// Imprime configurações carregadas
-		config.PrintLoadedConfig()
-
 		// Cria conexão com base no .env
 		connectionString := config.BuildConnectionString()
 

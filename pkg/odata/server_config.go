@@ -3,15 +3,19 @@ package odata
 import (
 	"crypto/tls"
 	"time"
+
+	"github.com/gofiber/fiber/v3"
 )
 
 // EntityAuthConfig configurações de autenticação por entidade
 type EntityAuthConfig struct {
-	RequireAuth    bool     // Se true, todas as operações requerem autenticação
-	RequiredRoles  []string // Roles necessárias para acessar a entidade
-	RequiredScopes []string // Scopes necessários para acessar a entidade
-	RequireAdmin   bool     // Se true, apenas administradores podem acessar
-	ReadOnly       bool     // Se true, apenas operações de leitura são permitidas
+	RequireAuth    bool            // Se true, todas as operações requerem autenticação
+	RequiredRoles  []string        // Roles necessárias para acessar a entidade
+	RequiredScopes []string        // Scopes necessários para acessar a entidade
+	RequireAdmin   bool            // Se true, apenas administradores podem acessar
+	ReadOnly       bool            // Se true, apenas operações de leitura são permitidas
+	Middlewares    []fiber.Handler // Middlewares customizados (ex: JWT, Basic Auth)
+	Permissions    []string        // Operações permitidas: GET, POST, PUT, DELETE, PATCH - vazio = todas
 }
 
 // ServerConfig representa as configurações do servidor

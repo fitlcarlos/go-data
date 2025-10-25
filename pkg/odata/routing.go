@@ -40,98 +40,105 @@ func (s *Server) setupBaseRoutes() {
 func (s *Server) setupEntityRoutes(entityName string) {
 	prefix := s.config.RoutePrefix
 
-	// Configurar middlewares de autenticação se JWT estiver habilitado
-	var authMiddleware fiber.Handler
-	if s.config.EnableJWT {
-		// Usar middleware de autenticação opcional para permitir acesso sem token se configurado
-		authMiddleware = s.OptionalAuthMiddleware()
-	}
+	// Obter configuração de autenticação da entidade (se houver)
+	entityAuth, hasAuth := s.GetEntityAuth(entityName)
 
-	// Middleware para verificar autenticação específica da entidade
-	entityAuthMiddleware := s.RequireEntityAuth(entityName)
-
-	// Aplicar middlewares nas rotas
+	// Preparar middlewares customizados da entidade
 	var middlewares []fiber.Handler
-	if authMiddleware != nil {
-		middlewares = append(middlewares, authMiddleware)
+	if hasAuth && len(entityAuth.Middlewares) > 0 {
+		middlewares = append(middlewares, entityAuth.Middlewares...)
 	}
-	middlewares = append(middlewares, entityAuthMiddleware)
 
-	// Rota para coleção de entidades (GET, POST)
-	getHandlers := append(middlewares, s.handleEntityCollection)
-	s.router.Get(prefix+"/"+entityName, getHandlers[0], getHandlers[1:]...)
-
-	postHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "POST"), s.handleEntityCollection)
-	s.router.Post(prefix+"/"+entityName, postHandlers[0], postHandlers[1:]...)
-
-	// Rota para entidade individual (GET, PUT, PATCH, DELETE)
-	// Usando padrão wildcard para capturar URLs como /odata/FabTarefa(53)
-	getByIdHandlers := append(middlewares, s.handleEntityById)
-	s.router.Get(prefix+"/"+entityName+"(*)", getByIdHandlers[0], getByIdHandlers[1:]...)
-
-	putHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PUT"), s.handleEntityById)
-	s.router.Put(prefix+"/"+entityName+"(*)", putHandlers[0], putHandlers[1:]...)
-
-	patchHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "PATCH"), s.handleEntityById)
-	s.router.Patch(prefix+"/"+entityName+"(*)", patchHandlers[0], patchHandlers[1:]...)
-
-	deleteHandlers := append(middlewares, s.CheckEntityReadOnly(entityName, "DELETE"), s.handleEntityById)
-	s.router.Delete(prefix+"/"+entityName+"(*)", deleteHandlers[0], deleteHandlers[1:]...)
-
-	// Rota para count da coleção
-	countHandlers := append(middlewares, s.handleEntityCount)
-	s.router.Get(prefix+"/"+entityName+"/$count", countHandlers[0], countHandlers[1:]...)
-
-	// Rota OPTIONS para CORS se habilitado
-	if s.config.EnableCORS {
-		s.router.Options(prefix+"/"+entityName, s.handleOptions)
-		s.router.Options(prefix+"/"+entityName+"(*)", s.handleOptions)
-	}
-}
-
-// setupEntityRoutesWithAuth configura as rotas para uma entidade com autenticação customizada
-func (s *Server) setupEntityRoutesWithAuth(entityName string, auth AuthProvider, readOnly bool) {
-	prefix := s.config.RoutePrefix
-
-	// Usa o middleware de autenticação customizado
-	authMiddleware := AuthMiddleware(auth)
-
-	// Criar middleware de readonly se necessário
-	var readOnlyMiddleware fiber.Handler
-	if readOnly {
-		readOnlyMiddleware = func(c fiber.Ctx) error {
+	// Adicionar middleware de readonly se necessário
+	if hasAuth && entityAuth.ReadOnly {
+		readOnlyMiddleware := func(c fiber.Ctx) error {
 			method := c.Method()
 			if method != "GET" && method != "OPTIONS" {
 				return fiber.NewError(fiber.StatusForbidden, "Entidade "+entityName+" é apenas leitura")
 			}
 			return c.Next()
 		}
+		middlewares = append(middlewares, readOnlyMiddleware)
 	}
 
-	// Rota para coleção de entidades (GET sempre permitido, POST se não readOnly)
-	s.router.Get(prefix+"/"+entityName, authMiddleware, s.handleEntityCollection)
-
-	if !readOnly {
-		s.router.Post(prefix+"/"+entityName, authMiddleware, s.handleEntityCollection)
-	} else if readOnlyMiddleware != nil {
-		s.router.Post(prefix+"/"+entityName, authMiddleware, readOnlyMiddleware, s.handleEntityCollection)
+	// Função helper para verificar se operação é permitida
+	isOperationAllowed := func(operation string) bool {
+		if !hasAuth || len(entityAuth.Permissions) == 0 {
+			return true // Se não tem permissions definidas, permite todas
+		}
+		for _, perm := range entityAuth.Permissions {
+			if perm == operation {
+				return true
+			}
+		}
+		return false
 	}
 
-	// Rota para entidade individual (GET sempre permitido, PUT/PATCH/DELETE se não readOnly)
-	s.router.Get(prefix+"/"+entityName+"(*)", authMiddleware, s.handleEntityById)
-
-	if !readOnly {
-		s.router.Put(prefix+"/"+entityName+"(*)", authMiddleware, s.handleEntityById)
-		s.router.Patch(prefix+"/"+entityName+"(*)", authMiddleware, s.handleEntityById)
-		s.router.Delete(prefix+"/"+entityName+"(*)", authMiddleware, s.handleEntityById)
-	} else if readOnlyMiddleware != nil {
-		s.router.Put(prefix+"/"+entityName+"(*)", authMiddleware, readOnlyMiddleware, s.handleEntityById)
-		s.router.Patch(prefix+"/"+entityName+"(*)", authMiddleware, readOnlyMiddleware, s.handleEntityById)
-		s.router.Delete(prefix+"/"+entityName+"(*)", authMiddleware, readOnlyMiddleware, s.handleEntityById)
+	// Rota para coleção de entidades (GET, POST)
+	if isOperationAllowed("GET") {
+		if len(middlewares) > 0 {
+			// Fiber v3: handler PRIMEIRO, depois middlewares
+			s.router.Get(prefix+"/"+entityName, s.handleEntityCollection, middlewares...)
+		} else {
+			s.router.Get(prefix+"/"+entityName, s.handleEntityCollection)
+		}
 	}
 
-	// Rota para count da coleção
-	s.router.Get(prefix+"/"+entityName+"/$count", authMiddleware, s.handleEntityCount)
+	if isOperationAllowed("POST") && !(hasAuth && entityAuth.ReadOnly) {
+		if len(middlewares) > 0 {
+			// Fiber v3: handler PRIMEIRO, depois middlewares
+			s.router.Post(prefix+"/"+entityName, s.handleEntityCollection, middlewares...)
+		} else {
+			s.router.Post(prefix+"/"+entityName, s.handleEntityCollection)
+		}
+	}
+
+	// Rota para entidade individual (GET, PUT, PATCH, DELETE)
+	if isOperationAllowed("GET") {
+		if len(middlewares) > 0 {
+			// Fiber v3: handler PRIMEIRO, depois middlewares
+			s.router.Get(prefix+"/"+entityName+"(*)", s.handleEntityById, middlewares...)
+		} else {
+			s.router.Get(prefix+"/"+entityName+"(*)", s.handleEntityById)
+		}
+	}
+
+	if isOperationAllowed("PUT") && !(hasAuth && entityAuth.ReadOnly) {
+		if len(middlewares) > 0 {
+			// Fiber v3: handler PRIMEIRO, depois middlewares
+			s.router.Put(prefix+"/"+entityName+"(*)", s.handleEntityById, middlewares...)
+		} else {
+			s.router.Put(prefix+"/"+entityName+"(*)", s.handleEntityById)
+		}
+	}
+
+	if isOperationAllowed("PATCH") && !(hasAuth && entityAuth.ReadOnly) {
+		if len(middlewares) > 0 {
+			// Fiber v3: handler PRIMEIRO, depois middlewares
+			s.router.Patch(prefix+"/"+entityName+"(*)", s.handleEntityById, middlewares...)
+		} else {
+			s.router.Patch(prefix+"/"+entityName+"(*)", s.handleEntityById)
+		}
+	}
+
+	if isOperationAllowed("DELETE") && !(hasAuth && entityAuth.ReadOnly) {
+		if len(middlewares) > 0 {
+			// Fiber v3: handler PRIMEIRO, depois middlewares
+			s.router.Delete(prefix+"/"+entityName+"(*)", s.handleEntityById, middlewares...)
+		} else {
+			s.router.Delete(prefix+"/"+entityName+"(*)", s.handleEntityById)
+		}
+	}
+
+	// Rota para count da coleção (sempre GET)
+	if isOperationAllowed("GET") {
+		if len(middlewares) > 0 {
+			// Fiber v3: handler PRIMEIRO, depois middlewares
+			s.router.Get(prefix+"/"+entityName+"/$count", s.handleEntityCount, middlewares...)
+		} else {
+			s.router.Get(prefix+"/"+entityName+"/$count", s.handleEntityCount)
+		}
+	}
 
 	// Rota OPTIONS para CORS se habilitado
 	if s.config.EnableCORS {

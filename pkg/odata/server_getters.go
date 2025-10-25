@@ -64,11 +64,10 @@ func (s *Server) GetEntityService(name string) EntityService {
 	return s.entities[name]
 }
 
-// createAuthContext cria um AuthContext para handlers de autenticação
-// Fornece acesso ao ObjectManager, Connection, Provider e Pool
-func (s *Server) createAuthContext(c fiber.Ctx) *AuthContext {
-	return &AuthContext{
-		FiberContext: c,
-		server:       s,
-	}
+// GetEntityAuth retorna a configuração de autenticação de uma entidade
+func (s *Server) GetEntityAuth(name string) (EntityAuthConfig, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	auth, ok := s.entityAuth[name]
+	return auth, ok
 }

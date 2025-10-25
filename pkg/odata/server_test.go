@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/auth"
 	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,13 +69,15 @@ func TestServerRegistration(t *testing.T) {
 		assert.NotEmpty(t, metadata.Properties)
 	})
 
-	t.Run("RegisterEntity_WithAuth", func(t *testing.T) {
+	t.Run("RegisterEntity_WithMiddleware", func(t *testing.T) {
 		server := NewServer()
 
-		// Mock auth provider
-		mockAuth := &mockAuthProvider{}
+		// Mock middleware
+		mockMiddleware := func(c fiber.Ctx) error {
+			return c.Next()
+		}
 
-		err := server.RegisterEntity("SecureEntity", TestEntity{}, WithAuth(mockAuth))
+		err := server.RegisterEntity("SecureEntity", TestEntity{}, WithMiddleware(mockMiddleware))
 		require.NoError(t, err)
 
 		assert.Contains(t, server.entities, "SecureEntity")
@@ -100,10 +101,12 @@ func TestServerRegistration(t *testing.T) {
 
 	t.Run("RegisterEntity_MultipleOptions", func(t *testing.T) {
 		server := NewServer()
-		mockAuth := &mockAuthProvider{}
+		mockMiddleware := func(c fiber.Ctx) error {
+			return c.Next()
+		}
 
 		err := server.RegisterEntity("ComplexEntity", TestEntity{},
-			WithAuth(mockAuth),
+			WithMiddleware(mockMiddleware),
 			WithReadOnly(true),
 		)
 		require.NoError(t, err)
@@ -234,11 +237,13 @@ func TestEntityOptions(t *testing.T) {
 		Name string `odata:"name"`
 	}
 
-	t.Run("WithAuth", func(t *testing.T) {
+	t.Run("WithMiddleware", func(t *testing.T) {
 		server := NewServer()
-		mockAuth := &mockAuthProvider{}
+		mockMiddleware := func(c fiber.Ctx) error {
+			return c.Next()
+		}
 
-		err := server.RegisterEntity("Test", TestEntity{}, WithAuth(mockAuth))
+		err := server.RegisterEntity("Test", TestEntity{}, WithMiddleware(mockMiddleware))
 		require.NoError(t, err)
 
 		assert.Contains(t, server.entityAuth, "Test")
@@ -270,10 +275,12 @@ func TestEntityOptions(t *testing.T) {
 
 	t.Run("MultipleOptions", func(t *testing.T) {
 		server := NewServer()
-		mockAuth := &mockAuthProvider{}
+		mockMiddleware := func(c fiber.Ctx) error {
+			return c.Next()
+		}
 
 		err := server.RegisterEntity("Test", TestEntity{},
-			WithAuth(mockAuth),
+			WithMiddleware(mockMiddleware),
 			WithReadOnly(true),
 		)
 		require.NoError(t, err)
@@ -326,22 +333,6 @@ func TestServerConfigPort(t *testing.T) {
 }
 
 // Mock AuthProvider para testes
-type mockAuthProvider struct{}
-
-func (m *mockAuthProvider) ValidateToken(token string) (*auth.UserIdentity, error) {
-	if token == "valid-token" {
-		return &auth.UserIdentity{Username: "testuser"}, nil
-	}
-	return nil, assert.AnError
-}
-
-func (m *mockAuthProvider) GenerateToken(user *auth.UserIdentity) (string, error) {
-	return "generated-token", nil
-}
-
-func (m *mockAuthProvider) ExtractToken(c fiber.Ctx) string {
-	return c.Get("Authorization")
-}
 
 // Mock DatabaseProvider para testes
 type mockDatabaseProvider struct{}

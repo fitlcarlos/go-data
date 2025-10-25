@@ -600,16 +600,69 @@ func InvalidFilterError(filter string) *ODataError {
 	)
 }
 
-// ContextAuthenticator interface para autenticação com acesso ao contexto enriquecido
-// Pode ser implementada por qualquer mecanismo de autenticação (JWT, Basic Auth, API Key, etc)
-// Fornece acesso ao ObjectManager, Connection, Provider e Pool durante autenticação e refresh
-type ContextAuthenticator interface {
-	// AuthenticateWithContext autentica usuário durante login
-	// ctx fornece acesso ao banco de dados, IP do cliente, headers, etc
-	AuthenticateWithContext(ctx *AuthContext, username, password string) (*UserIdentity, error)
+// =======================================================================================
+// USER IDENTITY
+// =======================================================================================
 
-	// RefreshToken recarrega/valida dados do usuário durante refresh token
-	// Permite validar se usuário ainda está ativo e atualizar roles/permissions
-	// O contexto está disponível caso você queira validar no banco de dados
-	RefreshToken(ctx *AuthContext, username string) (*UserIdentity, error)
+// UserIdentity representa a identidade do usuário autenticado
+type UserIdentity struct {
+	Username string                 `json:"username"`
+	Roles    []string               `json:"roles"`
+	Scopes   []string               `json:"scopes"`
+	Admin    bool                   `json:"admin"`
+	Custom   map[string]interface{} `json:"custom"`
 }
+
+// HasRole verifica se o usuário possui uma role específica
+func (u *UserIdentity) HasRole(role string) bool {
+	for _, r := range u.Roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+// HasScope verifica se o usuário possui um scope específico
+func (u *UserIdentity) HasScope(scope string) bool {
+	for _, s := range u.Scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAnyRole verifica se o usuário possui pelo menos uma das roles
+func (u *UserIdentity) HasAnyRole(roles ...string) bool {
+	for _, role := range roles {
+		if u.HasRole(role) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAnyScope verifica se o usuário possui pelo menos um dos scopes
+func (u *UserIdentity) HasAnyScope(scopes ...string) bool {
+	for _, scope := range scopes {
+		if u.HasScope(scope) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetCustomClaim retorna um valor custom do usuário
+func (u *UserIdentity) GetCustomClaim(key string) (interface{}, bool) {
+	if u.Custom == nil {
+		return nil, false
+	}
+	val, ok := u.Custom[key]
+	return val, ok
+}
+
+// Constantes para chaves do contexto
+const (
+	UserContextKey = "user" // Chave para armazenar usuário no contexto
+)

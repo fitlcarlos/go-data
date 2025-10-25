@@ -8,7 +8,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/auth/basic"
 	"github.com/fitlcarlos/go-data/pkg/odata"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v3"
@@ -69,7 +68,10 @@ func main() {
 	// Validar variáveis de ambiente críticas
 	dbPassword := os.Getenv("DB_PASSWORD")
 	if dbPassword == "" {
-		log.Fatal("❌ DB_PASSWORD não configurado. Defina no .env ou nas variáveis de ambiente")
+		log.Println("⚠️  DB_PASSWORD não configurado. Usando banco in-memory para demo.")
+		// Para demonstração, vamos usar um mapa em memória
+		runInMemoryDemo()
+		return
 	}
 
 	// Conectar ao banco de dados
@@ -102,28 +104,33 @@ func main() {
 	// Criar alguns usuários de exemplo
 	seedUsers()
 
+	// Executar servidor com banco de dados
+	runWithDatabase()
+}
+
+func runInMemoryDemo() {
+	log.Println("🚀 Executando demo com usuários em memória")
+
 	// Configurar servidor OData
 	server := odata.NewServer()
 
-	// Configurar Basic Authentication COM AuthContext (recomendado)
-	// Usa validateUserWithContext que tem acesso ao ObjectManager, Connection, etc
-	basicAuth := basic.NewBasicAuthWithContext(
-		server, // Passa o server para acesso ao AuthContext
-		&basic.BasicAuthConfig{
-			Realm: "OData API with AuthContext",
-		},
-		validateUserWithContext, // Nova função com contexto enriquecido
-	)
+	// Criar middleware Basic Auth com validator customizado
+	basicAuthMiddleware := server.NewRouterBasicAuth(func(username, password string) bool {
+		// Validar credenciais (em produção, use banco de dados e bcrypt)
+		validUsers := map[string]string{
+			"admin": "admin123",
+			"user":  "user123",
+		}
 
-	// ALTERNATIVA: Usar método legado (sem contexto)
-	// basicAuth := basic.NewBasicAuth(
-	//     &basic.BasicAuthConfig{Realm: "OData API"},
-	//     validateUser, // Função legada sem contexto
-	// )
+		expectedPassword, exists := validUsers[username]
+		return exists && expectedPassword == password
+	}, &odata.BasicAuthConfig{
+		Realm: "OData API Demo",
+	})
 
 	// Registrar entidade Users (somente leitura, protegida por auth)
 	if err := server.RegisterEntity("Users", User{},
-		odata.WithAuth(basicAuth),
+		odata.WithMiddleware(basicAuthMiddleware),
 		odata.WithReadOnly(true),
 	); err != nil {
 		log.Fatal("Erro ao registrar entidade Users:", err)
@@ -131,18 +138,18 @@ func main() {
 
 	// Registrar entidade Products (leitura/escrita, protegida por auth)
 	if err := server.RegisterEntity("Products", Product{},
-		odata.WithAuth(basicAuth),
+		odata.WithMiddleware(basicAuthMiddleware),
 	); err != nil {
 		log.Fatal("Erro ao registrar entidade Products:", err)
 	}
 
 	// Rota pública de informações
-	server.GetRouter().Get("/api/v1/info", func(c fiber.Ctx) error {
+	server.Get("/api/v1/info", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message":    "OData API com Basic Authentication",
+			"message":    "OData API com Basic Authentication (In-Memory)",
 			"version":    "1.0",
 			"auth_type":  "Basic",
-			"realm":      basicAuth.GetRealm(),
+			"realm":      "OData API Demo",
 			"howto_auth": "Envie header: Authorization: Basic base64(username:password)",
 			"test_users": fiber.Map{
 				"admin": fiber.Map{
@@ -159,209 +166,196 @@ func main() {
 		})
 	})
 
-	// Rota para verificar usuário autenticado
-	server.GetRouter().Get("/api/v1/me", basic.BasicAuthMiddleware(basicAuth), func(c fiber.Ctx) error {
-		user := odata.GetCurrentUser(c)
-		if user == nil {
+	// Rota para verificar usuário autenticado (protegida)
+	server.Get("/api/v1/me", basicAuthMiddleware, func(c fiber.Ctx) error {
+		username := odata.GetBasicAuthUsername(c)
+		if username == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "Não autenticado",
 			})
 		}
 
-		role := ""
-		if len(user.Roles) > 0 {
-			role = user.Roles[0]
-		}
-
 		return c.JSON(fiber.Map{
 			"user": fiber.Map{
-				"id":       user.Custom["user_id"],
-				"username": user.Username,
-				"email":    user.Custom["email"],
-				"role":     role,
-				"admin":    user.Admin,
+				"username":  username,
+				"auth_type": "basic",
 			},
 		})
 	})
 
-	// Iniciar servidor
-	fmt.Println("\n🚀 Servidor OData com Basic Auth + AuthContext iniciado em http://localhost:3000")
-	fmt.Println("\n📋 Endpoints disponíveis:")
-	fmt.Println("  GET  /api/v1/info              - Informações da API (público)")
-	fmt.Println("  GET  /api/v1/me                - Usuário autenticado (requer auth)")
-	fmt.Println("  GET  /api/v1/Users             - Listar usuários (requer auth)")
-	fmt.Println("  GET  /api/v1/Products          - Listar produtos (requer auth)")
-	fmt.Println("  POST /api/v1/Products          - Criar produto (requer auth)")
-	fmt.Println("\n🔐 Credenciais de teste:")
-	fmt.Println("  Admin: username=admin, password=admin123")
-	fmt.Println("  User:  username=user, password=user123")
-	fmt.Println("\n💡 Exemplo de uso:")
-	fmt.Println(`  curl -u admin:admin123 http://localhost:3000/api/v1/Users`)
-	fmt.Println(`  curl -H "Authorization: Basic YWRtaW46YWRtaW4xMjM=" http://localhost:3000/api/v1/Users`)
-	fmt.Println()
-	fmt.Println("✨ NOVO: AuthContext - Autenticação com Contexto Enriquecido!")
-	fmt.Println("  - Acesso ao ObjectManager durante validação")
-	fmt.Println("  - Conexão SQL direta para rate limiting e audit")
-	fmt.Println("  - IP, Headers e outras informações do request")
-	fmt.Println("  - Rate limiting automático (bloqueia após 5 tentativas)")
-	fmt.Println("  - Backward compatible com validateUser() legado")
-	fmt.Println()
+	printInfo("In-Memory Demo")
 
 	if err := server.Start(); err != nil {
 		log.Fatal("Erro ao iniciar servidor:", err)
 	}
 }
 
-// validateUser valida credenciais do usuário no banco de dados usando bcrypt (legado)
-func validateUser(username, password string) (*odata.UserIdentity, error) {
-	log.Printf("⚠️  Using legacy validateUser method (without context)")
+func runWithDatabase() {
+	// Configurar servidor OData
+	server := odata.NewServer()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Criar middleware Basic Auth com validator que consulta o banco
+	basicAuthMiddleware := server.NewRouterBasicAuth(func(username, password string) bool {
+		return validateUserWithDatabase(username, password)
+	}, &odata.BasicAuthConfig{
+		Realm: "OData API with Database",
+	})
 
-	var user User
-	var passwordHash string
+	// Registrar entidade Users (somente leitura, protegida por auth)
+	if err := server.RegisterEntity("Users", User{},
+		odata.WithMiddleware(basicAuthMiddleware),
+		odata.WithReadOnly(true),
+	); err != nil {
+		log.Fatal("Erro ao registrar entidade Users:", err)
+	}
 
-	// Buscar usuário e hash da senha
-	query := `SELECT id, username, password, email, role, active FROM users WHERE username = ? AND active = 1`
-	err := db.QueryRowContext(ctx, query, username).Scan(
-		&user.ID,
-		&user.Username,
-		&passwordHash,
-		&user.Email,
-		&user.Role,
-		&user.Active,
-	)
+	// Registrar entidade Products (leitura/escrita, protegida por auth)
+	if err := server.RegisterEntity("Products", Product{},
+		odata.WithMiddleware(basicAuthMiddleware),
+	); err != nil {
+		log.Fatal("Erro ao registrar entidade Products:", err)
+	}
 
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("credenciais inválidas")
+	// Rota pública de informações
+	server.Get("/api/v1/info", func(c fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"message":    "OData API com Basic Authentication",
+			"version":    "1.0",
+			"auth_type":  "Basic",
+			"realm":      "OData API with Database",
+			"howto_auth": "Envie header: Authorization: Basic base64(username:password)",
+			"test_users": fiber.Map{
+				"admin": fiber.Map{
+					"username": "admin",
+					"password": "admin123",
+					"role":     "admin",
+				},
+				"user": fiber.Map{
+					"username": "user",
+					"password": "user123",
+					"role":     "user",
+				},
+			},
+		})
+	})
+
+	// Rota para verificar usuário autenticado (protegida)
+	server.Get("/api/v1/me", basicAuthMiddleware, func(c fiber.Ctx) error {
+		username := odata.GetBasicAuthUsername(c)
+		if username == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Não autenticado",
+			})
 		}
-		return nil, fmt.Errorf("erro ao consultar usuário: %w", err)
-	}
 
-	// Verificar senha usando bcrypt
-	if !CheckPasswordHash(password, passwordHash) {
-		return nil, fmt.Errorf("credenciais inválidas")
-	}
+		// Buscar informações adicionais do usuário no banco
+		user, err := getUserInfo(username)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Erro ao buscar informações do usuário",
+			})
+		}
 
-	// Converter para UserIdentity
-	return &odata.UserIdentity{
-		Username: user.Username,
-		Roles:    []string{user.Role},
-		Admin:    user.Role == "admin",
-		Custom: map[string]interface{}{
-			"user_id": user.ID,
-			"email":   user.Email,
-			"active":  user.Active,
-		},
-	}, nil
+		return c.JSON(fiber.Map{
+			"user": fiber.Map{
+				"id":       user.ID,
+				"username": user.Username,
+				"email":    user.Email,
+				"role":     user.Role,
+			},
+		})
+	})
+
+	printInfo("Database Mode")
+
+	if err := server.Start(); err != nil {
+		log.Fatal("Erro ao iniciar servidor:", err)
+	}
 }
 
-// validateUserWithContext - NOVA função com contexto enriquecido
-// Demonstra uso do AuthContext para acesso a ObjectManager, Connection, etc
-func validateUserWithContext(authCtx basic.AuthContext, username, password string) (*odata.UserIdentity, error) {
-	log.Printf("🔐 Basic Auth: %s from IP: %s", username, authCtx.IP())
-
-	// EXEMPLO 1: Usar ObjectManager para buscar usuário (opcional)
-	// manager := authCtx.GetManager()
-	// user, err := manager.Find("Users", username)
-
-	// EXEMPLO 2: Usar conexão SQL direta com informações do contexto
-	connInterface := authCtx.GetConnection()
-	conn, ok := connInterface.(*sql.DB)
-	if !ok || conn == nil {
-		return nil, fmt.Errorf("conexão não disponível")
-	}
-
+// validateUserWithDatabase valida credenciais do usuário no banco de dados
+func validateUserWithDatabase(username, password string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var user User
 	var passwordHash string
-	var loginAttempts int
 
-	// Buscar usuário, hash da senha e tentativas de login
-	query := `SELECT id, username, password, email, role, active, 
-	          COALESCE((SELECT attempts FROM user_security WHERE user_id = users.id), 0) as attempts
-	          FROM users WHERE username = ? AND active = 1`
-	err := conn.QueryRowContext(ctx, query, username).Scan(
-		&user.ID,
-		&user.Username,
-		&passwordHash,
-		&user.Email,
-		&user.Role,
-		&user.Active,
-		&loginAttempts,
-	)
+	// Buscar hash da senha do usuário
+	query := `SELECT password FROM users WHERE username = ? AND active = 1`
+	err := db.QueryRowContext(ctx, query, username).Scan(&passwordHash)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("❌ User not found: %s", username)
-			return nil, fmt.Errorf("credenciais inválidas")
+		} else {
+			log.Printf("❌ Database error: %v", err)
 		}
-		log.Printf("❌ Database error: %v", err)
-		return nil, fmt.Errorf("erro ao consultar usuário: %w", err)
-	}
-
-	// EXEMPLO 3: Rate limiting - bloquear após muitas tentativas
-	if loginAttempts > 5 {
-		log.Printf("🚫 Account locked due to too many attempts: %s", username)
-		return nil, fmt.Errorf("conta bloqueada por múltiplas tentativas")
+		return false
 	}
 
 	// Verificar senha usando bcrypt
 	if !CheckPasswordHash(password, passwordHash) {
-		// Incrementar contador de tentativas falhas
-		_, err = conn.ExecContext(ctx,
-			`INSERT INTO user_security (user_id, attempts, last_attempt) 
-			 VALUES (?, 1, NOW()) 
-			 ON DUPLICATE KEY UPDATE attempts = attempts + 1, last_attempt = NOW()`,
-			user.ID)
-		if err != nil {
-			log.Printf("⚠️  Failed to update login attempts: %v", err)
-		}
-
 		log.Printf("❌ Invalid password for user: %s", username)
-		return nil, fmt.Errorf("credenciais inválidas")
+		return false
 	}
 
-	// EXEMPLO 4: Audit log - registrar login bem-sucedido
-	providerInterface := authCtx.GetProvider()
-	tenantID := authCtx.GetTenantID()
-	userAgent := authCtx.GetHeader("User-Agent")
+	log.Printf("✅ Login successful: %s", username)
+	return true
+}
 
-	providerName := "unknown"
-	if provider, ok := providerInterface.(odata.DatabaseProvider); ok && provider != nil {
-		providerName = provider.GetDriverName()
-	}
+// getUserInfo busca informações do usuário no banco
+func getUserInfo(username string) (*User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	log.Printf("✅ Login successful: %s (ID: %d, Role: %s, Tenant: %s, Provider: %s, IP: %s, UA: %s)",
-		user.Username, user.ID, user.Role, tenantID, providerName, authCtx.IP(), userAgent)
+	var user User
 
-	// Resetar contador de tentativas
-	_, err = conn.ExecContext(ctx,
-		`INSERT INTO user_security (user_id, attempts, last_attempt, last_success) 
-		 VALUES (?, 0, NOW(), NOW()) 
-		 ON DUPLICATE KEY UPDATE attempts = 0, last_success = NOW()`,
-		user.ID)
+	query := `SELECT id, username, email, role, active, created_at FROM users WHERE username = ? AND active = 1`
+	err := db.QueryRowContext(ctx, query, username).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.Role,
+		&user.Active,
+		&user.CreatedAt,
+	)
+
 	if err != nil {
-		log.Printf("⚠️  Failed to reset login attempts: %v", err)
+		return nil, err
 	}
 
-	// Converter para UserIdentity
-	return &odata.UserIdentity{
-		Username: user.Username,
-		Roles:    []string{user.Role},
-		Admin:    user.Role == "admin",
-		Custom: map[string]interface{}{
-			"user_id": user.ID,
-			"email":   user.Email,
-			"active":  user.Active,
-			"ip":      authCtx.IP(),
-			"tenant":  tenantID,
-		},
-	}, nil
+	return &user, nil
+}
+
+func printInfo(mode string) {
+	fmt.Println()
+	fmt.Println("═══════════════════════════════════════════════")
+	fmt.Printf("  🔐 Servidor OData com Basic Auth (%s)\n", mode)
+	fmt.Println("═══════════════════════════════════════════════")
+	fmt.Println()
+	fmt.Println("📋 Endpoints disponíveis:")
+	fmt.Println("  GET  /api/v1/info              - Informações da API (público)")
+	fmt.Println("  GET  /api/v1/me                - Usuário autenticado (requer auth)")
+	fmt.Println("  GET  /api/v1/Users             - Listar usuários (requer auth)")
+	fmt.Println("  GET  /api/v1/Products          - Listar produtos (requer auth)")
+	fmt.Println("  POST /api/v1/Products          - Criar produto (requer auth)")
+	fmt.Println()
+	fmt.Println("🔐 Credenciais de teste:")
+	fmt.Println("  Admin: username=admin, password=admin123")
+	fmt.Println("  User:  username=user, password=user123")
+	fmt.Println()
+	fmt.Println("💡 Exemplo de uso:")
+	fmt.Println(`  curl -u admin:admin123 http://localhost:3000/api/v1/Users`)
+	fmt.Println(`  curl -H "Authorization: Basic YWRtaW46YWRtaW4xMjM=" http://localhost:3000/api/v1/Users`)
+	fmt.Println()
+	fmt.Println("✨ Novo sistema de autenticação:")
+	fmt.Println("  - Basic Auth nativo do Fiber v3")
+	fmt.Println("  - Validator customizado com acesso ao banco")
+	fmt.Println("  - Proteção via middleware nas entidades")
+	fmt.Println("  - Suporte a bcrypt para senhas")
+	fmt.Println()
+	fmt.Println("═══════════════════════════════════════════════")
+	fmt.Println()
 }
 
 // createTables cria as tabelas necessárias

@@ -42,9 +42,6 @@ func NewPostgreSQLProvider(connection ...*sql.DB) *PostgreSQLProvider {
 			}
 		}
 
-		// Imprime configurações carregadas
-		config.PrintLoadedConfig()
-
 		// Cria conexão com base no .env
 		connectionString := config.BuildConnectionString()
 
@@ -79,8 +76,6 @@ func NewPostgreSQLProvider(connection ...*sql.DB) *PostgreSQLProvider {
 					},
 				}
 			}
-
-			log.Printf("✅ Conexão PostgreSQL estabelecida usando configurações do .env")
 		}
 	} else {
 		db = connection[0]

@@ -1,14 +1,14 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/fitlcarlos/go-data/pkg/odata"
 	_ "github.com/fitlcarlos/go-data/pkg/providers" // Importa providers para registrar factories
-	"github.com/joho/godotenv"
+	"github.com/gofiber/fiber/v3"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // User representa um usuário do sistema
@@ -43,15 +43,25 @@ type Order struct {
 
 // SimpleUserStore armazena usuários em memória para demonstração
 type SimpleUserStore struct {
-	users map[string]*odata.UserIdentity
+	users map[string]*UserData
+}
+
+type UserData struct {
+	Username string
+	Password string
+	Roles    []string
+	Scopes   []string
+	Admin    bool
+	Custom   map[string]interface{}
 }
 
 // NewSimpleUserStore cria um novo store de usuários
 func NewSimpleUserStore() *SimpleUserStore {
 	return &SimpleUserStore{
-		users: map[string]*odata.UserIdentity{
+		users: map[string]*UserData{
 			"admin": {
 				Username: "admin",
+				Password: "password123",
 				Roles:    []string{"admin", "user"},
 				Scopes:   []string{"read", "write", "delete"},
 				Admin:    true,
@@ -64,6 +74,7 @@ func NewSimpleUserStore() *SimpleUserStore {
 			},
 			"manager": {
 				Username: "manager",
+				Password: "password123",
 				Roles:    []string{"manager", "user"},
 				Scopes:   []string{"read", "write"},
 				Admin:    false,
@@ -76,6 +87,7 @@ func NewSimpleUserStore() *SimpleUserStore {
 			},
 			"user": {
 				Username: "user",
+				Password: "password123",
 				Roles:    []string{"user"},
 				Scopes:   []string{"read"},
 				Admin:    false,
@@ -90,210 +102,49 @@ func NewSimpleUserStore() *SimpleUserStore {
 	}
 }
 
-// AuthenticateWithContext autentica usuário durante login com acesso ao contexto enriquecido
-// Demonstra uso do AuthContext para acesso a ObjectManager, Connection, etc
-func (s *SimpleUserStore) AuthenticateWithContext(ctx *odata.AuthContext, username, password string) (*odata.UserIdentity, error) {
-	// Acesso ao ObjectManager durante autenticação
-	manager := ctx.GetManager()
-
-	log.Printf("🔐 Login attempt for user: %s from IP: %s", username, ctx.IP())
-
-	// EXEMPLO 1: Buscar usuário no banco via ObjectManager
-	// Descomente se tiver a tabela Users configurada no banco
-	/*
-		userFromDB, err := manager.Find("Users", username)
-		if err != nil {
-			log.Printf("❌ User not found in database: %s", username)
-			// Fallback para users em memória
-		} else {
-			log.Printf("✅ User found in database")
-			// Aqui você validaria o hash da senha contra o banco
-			if userMap, ok := userFromDB.(map[string]interface{}); ok {
-				// Valide senha hash aqui
-				passwordHash := userMap["password"].(string)
-				// bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
-			}
-		}
-	*/
-
-	// EXEMPLO 2: Rate limiting usando conexão SQL direta
-	conn := ctx.GetConnection()
-	if conn != nil {
-		// Exemplo: verificar tentativas de login
-		// Descomente se tiver a tabela user_security
-		/*
-			var attempts int
-			err := conn.QueryRowContext(ctx.FiberContext.Context(),
-				"SELECT COALESCE(login_attempts, 0) FROM user_security WHERE username = ?",
-				username).Scan(&attempts)
-
-			if err == nil && attempts > 5 {
-				log.Printf("🚫 Account locked due to too many attempts: %s", username)
-				return nil, errors.New("conta bloqueada por múltiplas tentativas")
-			}
-		*/
-		log.Printf("📊 Connection available for rate limiting/audit")
-	}
-
-	// EXEMPLO 3: Audit log de tentativa de login
-	if manager != nil {
-		auditLog := map[string]any{
-			"event":      "login_attempt",
-			"username":   username,
-			"ip":         ctx.IP(),
-			"tenant":     ctx.GetTenantID(),
-			"user_agent": ctx.GetHeader("User-Agent"),
-		}
-		// Descomente se tiver tabela de audit log
-		// manager.Save(auditLog)
-		log.Printf("📝 Audit log: %+v", auditLog)
-	}
-
-	// Validação simples de senha (para demo)
-	if password != "password123" {
-		// Incrementar contador de tentativas falhas
-		// Descomente se tiver a tabela user_security
-		/*
-			if conn != nil {
-				conn.ExecContext(ctx.FiberContext.Context(),
-					"UPDATE user_security SET login_attempts = login_attempts + 1 WHERE username = ?",
-					username)
-			}
-		*/
-		return nil, errors.New("senha inválida")
-	}
-
-	// Buscar usuário da lista em memória
-	user, exists := s.users[username]
-	if !exists {
-		return nil, errors.New("usuário não encontrado")
-	}
-
-	// Resetar contador de tentativas em caso de sucesso
-	// Descomente se tiver a tabela user_security
-	/*
-		if conn != nil {
-			conn.ExecContext(ctx.FiberContext.Context(),
-				"UPDATE user_security SET login_attempts = 0, last_login = NOW() WHERE username = ?",
-				username)
-		}
-	*/
-
-	log.Printf("✅ Login successful for user: %s", username)
-	return user, nil
-}
-
-// RefreshToken recarrega/valida dados do usuário durante refresh token
-// O contexto está disponível para validar no banco, mas não é obrigatório usar
-func (s *SimpleUserStore) RefreshToken(ctx *odata.AuthContext, username string) (*odata.UserIdentity, error) {
-	log.Printf("🔄 Refreshing token for user: %s from IP: %s", username, ctx.IP())
-
-	// OPCIONAL: Buscar dados atualizados do banco
-	manager := ctx.GetManager()
-	if manager != nil {
-		// Exemplo: você poderia recarregar roles/permissions do banco
-		// userFromDB, err := manager.Find("Users", username)
-		// if err == nil {
-		//     log.Printf("✅ User data refreshed from database")
-		//     // Converter userFromDB para UserIdentity
-		// }
-	}
-
-	// Fallback para usuário em memória
-	user, exists := s.users[username]
-	if !exists {
-		return nil, errors.New("usuário não encontrado")
-	}
-
-	// Audit log do refresh
-	log.Printf("📝 Token refreshed: user=%s, ip=%s, tenant=%s",
-		username, ctx.IP(), ctx.GetTenantID())
-
-	return user, nil
-}
-
 // LoginRequest representa os dados de login
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-// LoginResponse representa a resposta de login
-type LoginResponse struct {
-	AccessToken  string              `json:"access_token"`
-	RefreshToken string              `json:"refresh_token"`
-	TokenType    string              `json:"token_type"`
-	ExpiresIn    int64               `json:"expires_in"`
-	User         *odata.UserIdentity `json:"user"`
+// RefreshRequest representa os dados de refresh
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
 }
 
 func main() {
-	// Carregar variáveis de ambiente
-	if err := godotenv.Load(); err != nil {
-		log.Println("⚠️  Arquivo .env não encontrado, usando variáveis de ambiente do sistema")
-	}
-
-	log.Println("✅ Configurações carregadas do .env")
-
 	// Cria o servidor
 	server := odata.NewServer()
 
 	// Cria o store de usuários
 	userStore := NewSimpleUserStore()
 
-	// ============================================================================
-	// OPÇÃO 1: Usar apenas .env (RECOMENDADO)
-	// ============================================================================
-	// JWT lê automaticamente JWT_SECRET, JWT_EXPIRATION, etc do .env
-	jwtAuth := odata.NewJwtAuth(nil)
+	// Criar middleware JWT (carrega configurações do .env automaticamente)
+	jwtMiddleware := server.NewRouterJWTAuth()
 	log.Println("✅ JWT configurado via .env")
 
-	// ============================================================================
-	// OPÇÃO 2: Override parcial (usa .env + customizações)
-	// ============================================================================
-	// Mantém JWT_SECRET do .env, mas override expiration
-	customJwtAuth := odata.NewJwtAuth(&odata.JWTConfig{
-		ExpiresIn: 2 * time.Hour, // Override apenas isso
-	})
-
-	// ============================================================================
-	// OPÇÃO 3: Override total (ignora .env)
-	// ============================================================================
-	// Configuração completamente manual (não recomendado para produção)
-	// manualJwtAuth := odata.NewJwtAuth(&odata.JWTConfig{
-	//     SecretKey: "your-custom-secret-key-min-32-chars",
-	//     Issuer:    "custom-issuer",
-	//     ExpiresIn: 30 * time.Minute,
-	//     RefreshIn: 7 * 24 * time.Hour,
-	//     Algorithm: "HS256",
-	// })
-
 	// Registrar entidades com autenticação
-	// Users: Protegido com JWT (usa .env)
-	if err := server.RegisterEntity("Users", User{}, odata.WithAuth(jwtAuth)); err != nil {
+	if err := server.RegisterEntity("Users", User{}, odata.WithMiddleware(jwtMiddleware)); err != nil {
 		log.Fatal("Erro ao registrar entidade Users:", err)
 	}
 
-	// Products: Protegido com JWT customizado (override expiration)
-	if err := server.RegisterEntity("Products", Product{}, odata.WithAuth(customJwtAuth)); err != nil {
+	if err := server.RegisterEntity("Products", Product{}, odata.WithMiddleware(jwtMiddleware)); err != nil {
 		log.Fatal("Erro ao registrar entidade Products:", err)
 	}
 
-	// Orders: Protegido com mesmo JWT
 	if err := server.RegisterEntity("Orders", Order{},
-		odata.WithAuth(jwtAuth),
+		odata.WithMiddleware(jwtMiddleware),
 		odata.WithReadOnly(false),
 	); err != nil {
 		log.Fatal("Erro ao registrar entidade Orders:", err)
 	}
 
-	// 4. Configurar rotas de autenticação
-	// SetupAuthRoutes detecta automaticamente se o authenticator implementa
-	// ContextAuthenticator e usa AuthContext quando disponível
-	server.SetupAuthRoutes(userStore)
+	// Configurar rotas de autenticação manualmente
+	setupAuthRoutes(server, userStore)
 
 	// Imprimir informações de configuração
-	fmt.Println("🔐 Servidor JWT com AuthContext configurado!")
+	fmt.Println("🔐 Servidor JWT configurado!")
 	fmt.Println("📋 Configurações de Autenticação:")
 	fmt.Println("   - Users: Autenticação requerida")
 	fmt.Println("   - Products: Autenticação requerida")
@@ -321,25 +172,156 @@ func main() {
 	fmt.Println("   2. Usar o access_token retornado no header: Authorization: Bearer <token>")
 	fmt.Println("   3. Acessar endpoints protegidos")
 	fmt.Println()
-	fmt.Println("✨ NOVO: AuthContext - Autenticação com Contexto Enriquecido!")
-	fmt.Println("   - Acesso ao ObjectManager durante login")
-	fmt.Println("   - Conexão SQL direta para rate limiting e audit")
-	fmt.Println("   - Suporte a multi-tenant na autenticação")
-	fmt.Println("   - IP, Headers e outras informações do request")
-	fmt.Println("   - Backward compatible com método Authenticate() legado")
-	fmt.Println()
-	fmt.Println("🔧 Recursos disponíveis no AuthContext:")
-	fmt.Println("   - ctx.GetManager() - ObjectManager para ORM")
-	fmt.Println("   - ctx.GetConnection() - Conexão SQL direta")
-	fmt.Println("   - ctx.GetProvider() - DatabaseProvider")
-	fmt.Println("   - ctx.GetPool() - Pool multi-tenant")
-	fmt.Println("   - ctx.IP() - Endereço IP do cliente")
-	fmt.Println("   - ctx.GetHeader() - Headers da requisição")
-	fmt.Println()
 
 	// Iniciar servidor
 	log.Println("🚀 Servidor iniciado com configurações automaticamente carregadas")
 	if err := server.Start(); err != nil {
 		log.Fatal("Erro ao iniciar servidor:", err)
 	}
+}
+
+func setupAuthRoutes(server *odata.Server, userStore *SimpleUserStore) {
+	// POST /auth/login - Login e geração de token
+	server.Post("/auth/login", func(c fiber.Ctx) error {
+		var req LoginRequest
+		if err := c.Bind().JSON(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Dados de login inválidos"})
+		}
+
+		if req.Username == "" || req.Password == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Username e password são obrigatórios"})
+		}
+
+		log.Printf("🔐 Login attempt for user: %s from IP: %s", req.Username, c.IP())
+
+		// Validar usuário
+		userData, exists := userStore.users[req.Username]
+		if !exists || userData.Password != req.Password {
+			log.Printf("❌ Invalid credentials for user: %s", req.Username)
+			return c.Status(401).JSON(fiber.Map{"error": "Credenciais inválidas"})
+		}
+
+		// Criar claims JWT
+		claims := jwt.MapClaims{
+			"username": userData.Username,
+			"roles":    userData.Roles,
+			"scopes":   userData.Scopes,
+			"admin":    userData.Admin,
+		}
+
+		// Adicionar custom fields
+		for k, v := range userData.Custom {
+			claims[k] = v
+		}
+
+		// Gerar tokens
+		accessToken, err := odata.GenerateJWT(claims)
+		if err != nil {
+			log.Printf("❌ Error generating access token: %v", err)
+			return c.Status(500).JSON(fiber.Map{"error": "Erro ao gerar token de acesso"})
+		}
+
+		refreshToken, err := odata.GenerateRefreshToken(claims)
+		if err != nil {
+			log.Printf("❌ Error generating refresh token: %v", err)
+			return c.Status(500).JSON(fiber.Map{"error": "Erro ao gerar refresh token"})
+		}
+
+		log.Printf("✅ Login successful: %s (Admin: %v)", userData.Username, userData.Admin)
+
+		return c.JSON(fiber.Map{
+			"access_token":  accessToken,
+			"refresh_token": refreshToken,
+			"token_type":    "Bearer",
+			"expires_in":    86400, // 24h em segundos
+			"user": fiber.Map{
+				"username": userData.Username,
+				"roles":    userData.Roles,
+				"scopes":   userData.Scopes,
+				"admin":    userData.Admin,
+				"custom":   userData.Custom,
+			},
+		})
+	})
+
+	// POST /auth/refresh - Renovar access token
+	server.Post("/auth/refresh", func(c fiber.Ctx) error {
+		var req RefreshRequest
+		if err := c.Bind().JSON(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Dados de refresh inválidos"})
+		}
+
+		if req.RefreshToken == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Refresh token é obrigatório"})
+		}
+
+		// Validar refresh token
+		claims, err := odata.ValidateJWT(req.RefreshToken)
+		if err != nil {
+			log.Printf("❌ Invalid refresh token: %v", err)
+			return c.Status(401).JSON(fiber.Map{"error": "Refresh token inválido"})
+		}
+
+		username, _ := claims["username"].(string)
+		log.Printf("🔄 Refresh token for user: %s from IP: %s", username, c.IP())
+
+		// Recarregar dados do usuário
+		userData, exists := userStore.users[username]
+		if !exists {
+			log.Printf("❌ User not found during refresh: %s", username)
+			return c.Status(401).JSON(fiber.Map{"error": "Usuário não encontrado"})
+		}
+
+		// Criar novos claims
+		newClaims := jwt.MapClaims{
+			"username": userData.Username,
+			"roles":    userData.Roles,
+			"scopes":   userData.Scopes,
+			"admin":    userData.Admin,
+		}
+
+		// Adicionar custom fields
+		for k, v := range userData.Custom {
+			newClaims[k] = v
+		}
+
+		// Gerar novo access token
+		newAccessToken, err := odata.GenerateJWT(newClaims)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Erro ao gerar novo token"})
+		}
+
+		log.Printf("✅ Token refreshed: %s (Admin: %v)", username, userData.Admin)
+
+		return c.JSON(fiber.Map{
+			"access_token": newAccessToken,
+			"token_type":   "Bearer",
+			"expires_in":   86400, // 24h em segundos
+		})
+	})
+
+	// POST /auth/logout - Logout
+	server.Post("/auth/logout", func(c fiber.Ctx) error {
+		log.Printf("👋 Logout from IP: %s", c.IP())
+		return c.JSON(fiber.Map{
+			"message": "Logout realizado com sucesso",
+		})
+	})
+
+	// GET /auth/me - Informações do usuário autenticado
+	server.Get("/auth/me", func(c fiber.Ctx) error {
+		// Extrair claims do JWT
+		claims := odata.GetJWTClaims(c)
+		if claims == nil {
+			return c.Status(401).JSON(fiber.Map{"error": "Token não fornecido ou inválido"})
+		}
+
+		return c.JSON(fiber.Map{
+			"username": claims["username"],
+			"roles":    claims["roles"],
+			"scopes":   claims["scopes"],
+			"admin":    claims["admin"],
+			"custom":   claims,
+		})
+	})
 }

@@ -3,7 +3,6 @@ package odata
 import (
 	"database/sql"
 	"os"
-	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
@@ -46,6 +45,12 @@ func (s *Server) setupMultiTenantMiddlewares() {
 
 	s.router.Use(fiberrecover.New())
 
+	// Middleware que injeta o servidor no contexto Fiber
+	s.router.Use(func(c fiber.Ctx) error {
+		c.Locals("odata_server", s)
+		return c.Next()
+	})
+
 	// Middleware de rate limit se habilitado
 	if s.rateLimiter != nil {
 		s.router.Use(s.RateLimitMiddleware())
@@ -53,71 +58,8 @@ func (s *Server) setupMultiTenantMiddlewares() {
 }
 
 // =======================================================================================
-// AUTHENTICATION MIDDLEWARES (DEPRECATED - mantidos para compatibilidade)
+// AUTHENTICATION MIDDLEWARES (DEPRECATED - removidos - use NewRouterJWTAuth)
 // =======================================================================================
-
-// AuthMiddleware middleware de autenticação obrigatória (DEPRECATED: use auth.AuthMiddleware)
-// Mantido para compatibilidade retroativa com código legado
-func (s *Server) AuthMiddleware() fiber.Handler {
-	return func(c fiber.Ctx) error {
-		if s.jwtService == nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "JWT não configurado")
-		}
-
-		token := extractTokenFromContext(c)
-		if token == "" {
-			return fiber.NewError(fiber.StatusUnauthorized, "Token de acesso requerido")
-		}
-
-		user, err := s.jwtService.ValidateAndExtractUser(token)
-		if err != nil {
-			return fiber.NewError(fiber.StatusUnauthorized, "Token inválido")
-		}
-
-		// Armazenar usuário no contexto
-		c.Locals(UserContextKey, user)
-		return c.Next()
-	}
-}
-
-// OptionalAuthMiddleware middleware de autenticação opcional (DEPRECATED: use auth.OptionalAuthMiddleware)
-// Mantido para compatibilidade retroativa com código legado
-func (s *Server) OptionalAuthMiddleware() fiber.Handler {
-	return func(c fiber.Ctx) error {
-		if s.jwtService == nil {
-			return c.Next()
-		}
-
-		token := extractTokenFromContext(c)
-		if token == "" {
-			return c.Next()
-		}
-
-		user, err := s.jwtService.ValidateAndExtractUser(token)
-		if err != nil {
-			// Token inválido, mas não bloqueia a requisição
-			return c.Next()
-		}
-
-		// Armazenar usuário no contexto
-		c.Locals(UserContextKey, user)
-		return c.Next()
-	}
-}
-
-// extractTokenFromContext extrai o token do cabeçalho Authorization
-func extractTokenFromContext(c fiber.Ctx) string {
-	authHeader := c.Get("Authorization")
-	if authHeader == "" {
-		return ""
-	}
-
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return ""
-	}
-
-	return strings.TrimPrefix(authHeader, "Bearer ")
-}
 
 // =======================================================================================
 // ENTITY-SPECIFIC MIDDLEWARES
@@ -126,18 +68,10 @@ func extractTokenFromContext(c fiber.Ctx) string {
 // RequireEntityAuth aplica middleware de autenticação baseado na configuração da entidade
 func (s *Server) RequireEntityAuth(entityName string) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		// Se JWT não estiver habilitado, pular verificação
-		if !s.config.EnableJWT {
-			return c.Next()
-		}
-
 		// Obter configuração da entidade
 		authConfig, exists := s.GetEntityAuth(entityName)
 		if !exists {
-			// Se não há configuração específica, usar configuração global
-			if s.config.RequireAuth {
-				return RequireAuth()(c)
-			}
+			// Se não há configuração específica, permitir acesso
 			return c.Next()
 		}
 
@@ -149,7 +83,7 @@ func (s *Server) RequireEntityAuth(entityName string) fiber.Handler {
 			}
 
 			// Verificar se é admin
-			if authConfig.RequireAdmin && !user.IsAdmin() {
+			if authConfig.RequireAdmin && !user.Admin {
 				return fiber.NewError(fiber.StatusForbidden, "Privilégios de administrador requeridos para acessar "+entityName)
 			}
 

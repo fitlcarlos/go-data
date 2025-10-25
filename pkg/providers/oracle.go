@@ -39,9 +39,6 @@ func NewOracleProvider(connection ...*sql.DB) *OracleProvider {
 			}
 		}
 
-		// Imprime configurações carregadas
-		config.PrintLoadedConfig()
-
 		// Cria conexão com base no .env
 		connectionString := config.BuildConnectionString()
 

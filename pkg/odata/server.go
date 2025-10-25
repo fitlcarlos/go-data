@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -33,7 +34,6 @@ type Server struct {
 	logger            *log.Logger
 	mu                sync.RWMutex
 	running           bool
-	jwtService        *JWTService
 	entityAuth        map[string]EntityAuthConfig // Configurações de autenticação por entidade
 	eventManager      *EntityEventManager         // Gerenciador de eventos de entidade
 	rateLimiter       *RateLimiter                // Rate limiter
@@ -133,9 +133,6 @@ func NewServerWithEnv(provider DatabaseProvider) *Server {
 		return newServerWithConfig(provider, DefaultServerConfig())
 	}
 
-	// Imprime configurações carregadas
-	config.PrintLoadedConfig()
-
 	return newServerWithConfig(provider, config.ToServerConfig())
 }
 
@@ -153,12 +150,6 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 		logger:       logger,
 		entityAuth:   make(map[string]EntityAuthConfig),
 		eventManager: NewEntityEventManager(logger),
-	}
-
-	// Configurar JWT se habilitado
-	if config.EnableJWT {
-		server.jwtService = NewJWTService(config.JWTConfig)
-		server.logger.Printf("JWT habilitado com issuer: %s", config.JWTConfig.Issuer)
 	}
 
 	// Configurar Rate Limit se habilitado
@@ -211,6 +202,12 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 	// Middleware de recovery sempre ativo para segurança
 	server.router.Use(fiberrecover.New())
 
+	// Middleware que injeta o servidor no contexto Fiber
+	server.router.Use(func(c fiber.Ctx) error {
+		c.Locals("odata_server", server)
+		return c.Next()
+	})
+
 	// Middleware de conexão de banco de dados (transparente)
 	server.router.Use(server.DatabaseMiddleware())
 
@@ -231,9 +228,6 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 // RegisterEntity registra uma entidade no servidor usando mapeamento automático
 // Aceita EntityOptions para configuração adicional (como WithAuth, WithReadOnly)
 func (s *Server) RegisterEntity(name string, entity interface{}, opts ...EntityOption) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// Cria configuração da entidade
 	config := &EntityConfig{
 		Name:   name,
@@ -255,38 +249,38 @@ func (s *Server) RegisterEntity(name string, entity interface{}, opts ...EntityO
 	// Se multi-tenant estiver habilitado, usa MultiTenantEntityService
 	if s.multiTenantConfig != nil && s.multiTenantConfig.Enabled {
 		service = NewMultiTenantEntityService(metadata, s)
-		s.logger.Printf("Entidade '%s' registrada com suporte multi-tenant", name)
 	} else {
 		service = NewBaseEntityService(s.provider, metadata, s)
-		s.logger.Printf("Entidade '%s' registrada com provider único", name)
 	}
 
+	// Bloco com lock APENAS para modificar mapas
+	s.mu.Lock()
 	s.entities[name] = service
 
-	// Armazena configuração de autenticação/permissões se especificado
-	if config.Auth != nil || config.ReadOnly {
+	// Armazena configuração de autenticação/permissões/middlewares se especificado
+	if len(config.Middlewares) > 0 || config.ReadOnly || len(config.Permissions) > 0 {
 		s.entityAuth[name] = EntityAuthConfig{
-			RequireAuth: config.Auth != nil,
+			RequireAuth: len(config.Middlewares) > 0,
 			ReadOnly:    config.ReadOnly,
-		}
-		if config.Auth != nil {
-			s.logger.Printf("Entidade '%s' registrada com autenticação customizada", name)
+			Middlewares: config.Middlewares,
+			Permissions: config.Permissions,
 		}
 	}
+	s.mu.Unlock()
 
-	// Configura rotas
+	// Configura rotas FORA do lock para evitar deadlock
 	s.setupEntityRoutes(name)
 
-	s.logger.Printf("Entidade '%s' registrada com sucesso", name)
 	return nil
 }
 
 // RegisterEntityWithService registra uma entidade com um serviço customizado
 func (s *Server) RegisterEntityWithService(name string, service EntityService) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.entities[name] = service
+	s.mu.Unlock()
+
+	// Configura rotas FORA do lock para evitar deadlock
 	s.setupEntityRoutes(name)
 
 	s.logger.Printf("Entidade '%s' registrada com serviço customizado", name)
@@ -338,15 +332,13 @@ func (s *Server) startWithContext(ctx context.Context) error {
 	}
 
 	s.logger.Printf("🚀 Servidor OData iniciado em %s://%s", scheme, addr)
-	s.logger.Printf("📋 Entidades registradas: %d", len(s.entities))
-	for name := range s.entities {
-		s.logger.Printf("   - %s", name)
-	}
-	s.logger.Printf("🔗 Endpoints disponíveis:")
-	s.logger.Printf("   - Service Document: %s://%s%s/", scheme, addr, s.config.RoutePrefix)
-	s.logger.Printf("   - Metadata: %s://%s%s/$metadata", scheme, addr, s.config.RoutePrefix)
-	s.logger.Printf("   - Health Check: %s://%s/health", scheme, addr)
-	s.logger.Printf("   - Server Info: %s://%s/info", scheme, addr)
+	s.logger.Println("")
+
+	// Imprimir configurações carregadas
+	s.printServerConfig()
+
+	// Imprimir middlewares ativos
+	s.printActiveMiddlewares()
 
 	// Configurar shutdown graceful em goroutine separada
 	go s.setupGracefulShutdown(ctx)
@@ -631,4 +623,115 @@ func (s *Server) createServiceConfig() *service.Config {
 	return svcConfig
 }
 
-// DatabaseMiddleware middleware transparente para obter conexão de banco de dados
+// printActiveMiddlewares imprime os middlewares globais ativos
+func (s *Server) printActiveMiddlewares() {
+	s.logger.Println("⚙️  Middlewares Globais Ativos:")
+
+	middlewares := []string{}
+
+	// Middlewares sempre ativos
+	middlewares = append(middlewares, "✅ Recover (panic recovery)")
+	middlewares = append(middlewares, "✅ Server Context Injection")
+	middlewares = append(middlewares, "✅ Database Connection")
+
+	// Middlewares condicionais
+	if s.config.EnableCORS {
+		middlewares = append(middlewares, fmt.Sprintf("✅ CORS (Origins: %v)", s.config.AllowedOrigins))
+	}
+	if s.config.EnableLogging {
+		middlewares = append(middlewares, "✅ Logger (HTTP request logging)")
+	}
+	if s.rateLimiter != nil {
+		middlewares = append(middlewares, fmt.Sprintf("✅ Rate Limit (%d req/min, burst: %d)",
+			s.config.RateLimitConfig.RequestsPerMinute, s.config.RateLimitConfig.BurstSize))
+	}
+	if s.config.SecurityHeadersConfig != nil && s.config.SecurityHeadersConfig.Enabled {
+		middlewares = append(middlewares, "✅ Security Headers")
+	}
+	if s.auditLogger != nil && s.config.AuditLogConfig != nil && s.config.AuditLogConfig.Enabled {
+		middlewares = append(middlewares, fmt.Sprintf("✅ Audit Logger (tipo: %s)", s.config.AuditLogConfig.LogType))
+	}
+
+	// Multi-tenant
+	if s.multiTenantConfig != nil && s.multiTenantConfig.Enabled {
+		middlewares = append(middlewares, "✅ Multi-Tenant (tenant detection)")
+	}
+
+	for _, mw := range middlewares {
+		s.logger.Printf("   %s", mw)
+	}
+}
+
+// printServerConfig imprime as configurações do servidor
+func (s *Server) printServerConfig() {
+	s.logger.Println("📋 Configurações carregadas:")
+
+	// Informações do banco de dados
+	if s.provider != nil {
+		s.logger.Printf("   Database: %s", s.provider.GetDriverName())
+	} else if s.multiTenantPool != nil {
+		s.logger.Println("   Database: Multi-Tenant")
+	}
+
+	// Informações do servidor
+	s.logger.Printf("   Server: %s:%d%s", s.config.Host, s.config.Port, s.config.RoutePrefix)
+	s.logger.Printf("   CORS: %v", s.config.EnableCORS)
+
+	// Informações JWT (se houver)
+	if len(os.Getenv("JWT_SECRET_KEY")) > 0 {
+		s.logger.Printf("   JWT: true")
+		if issuer := os.Getenv("JWT_ISSUER"); issuer != "" {
+			s.logger.Printf("   JWT Issuer: %s", issuer)
+		}
+	} else {
+		s.logger.Printf("   JWT: false")
+	}
+
+	// TLS
+	tlsEnabled := s.config.TLSConfig != nil || (s.config.CertFile != "" && s.config.CertKeyFile != "")
+	s.logger.Printf("   TLS: %v", tlsEnabled)
+	s.logger.Println("")
+}
+
+// isSystemRoute verifica se o path é uma rota de sistema
+func (s *Server) isSystemRoute(path string) bool {
+	systemPaths := []string{"/health", "/info", "/$metadata", s.config.RoutePrefix + "/", "/"}
+	for _, sp := range systemPaths {
+		if path == sp || path == s.config.RoutePrefix+sp {
+			return true
+		}
+	}
+	return false
+}
+
+// isEntityRoute verifica se o path é uma rota de entidade OData
+func (s *Server) isEntityRoute(path string) bool {
+	for name := range s.entities {
+		entityPath := fmt.Sprintf("%s/%s", s.config.RoutePrefix, name)
+
+		// Verifica se o path corresponde a qualquer padrão de rota de entidade
+		if path == entityPath || // Coleção (GET, POST)
+			path == entityPath+"(*)" || // Entidade individual (GET, PUT, PATCH, DELETE) - Fiber syntax
+			path == entityPath+"/:id" || // Entidade individual alternativo
+			path == entityPath+"(/:id)" || // OData syntax
+			path == entityPath+"/$count" || // Contagem OData
+			strings.HasPrefix(path, entityPath+"/") { // Qualquer subrota da entidade
+			return true
+		}
+	}
+	return false
+}
+
+// isProtectedRoute tenta detectar se uma rota é protegida (heurística)
+func (s *Server) isProtectedRoute(path string) bool {
+	// Heurística: rotas com /auth/ normalmente são de autenticação
+	// mas podem não ser protegidas (como /auth/login)
+	// Rotas protegidas geralmente incluem /me, /profile, etc
+	protectedPaths := []string{"/me", "/profile", "/dashboard"}
+	for _, pp := range protectedPaths {
+		if len(path) >= len(pp) && path[len(path)-len(pp):] == pp {
+			return true
+		}
+	}
+	return false
+}

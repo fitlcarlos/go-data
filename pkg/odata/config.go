@@ -104,6 +104,15 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		return nil, fmt.Errorf("erro ao carregar arquivo .env: %w", err)
 	}
 
+	// ✅ INJETAR TODAS as variáveis no ambiente global
+	// Isso permite que os.Getenv() funcione para todas as variáveis
+	// APENAS se a variável NÃO existir já no ambiente (não sobrescrever variáveis do sistema)
+	for key, value := range variables {
+		if os.Getenv(key) == "" {
+			os.Setenv(key, value)
+		}
+	}
+
 	// Cria a configuração com valores padrão
 	config := &EnvConfig{
 		Variables: variables,
@@ -405,5 +414,4 @@ func (c *EnvConfig) PrintLoadedConfig() {
 		fmt.Printf("   JWT Issuer: %s\n", c.JWTIssuer)
 	}
 	fmt.Printf("   TLS: %v\n", c.ServerTLSCertFile != "" && c.ServerTLSKeyFile != "")
-	fmt.Println()
 }
