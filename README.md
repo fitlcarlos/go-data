@@ -20,6 +20,7 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - [Eventos de Entidade](#-eventos-de-entidade)
 - [ObjectManager (ORM)](#-objectmanager-orm)
 - [Service Operations](#-service-operations)
+- [Rotas Customizadas](#️-rotas-customizadas)
 - [Configuração Programática](#-configuração-programática)
 - [Mapeamento de Entidades](#-mapeamento-de-entidades)
 - [Bancos de Dados Suportados](#-bancos-de-dados-suportados)
@@ -4037,6 +4038,248 @@ type User struct {
     DtAlt   nullable.Time   `json:"dt_alt"`   // Pode ser null
 }
 ```
+
+## 🛤️ Rotas Customizadas
+
+O Go-Data simplifica o registro de rotas customizadas (não-OData) aplicando automaticamente o prefixo de rota e garantindo que todos os context helpers estejam disponíveis.
+
+### API Simplificada
+
+```go
+func main() {
+    server := odata.NewServer()
+    
+    // ✅ Rotas customizadas com prefixo automático
+    server.Post("/auth/login", Login)
+    server.Post("/auth/refresh", Refresh)
+    server.Get("/health", HealthCheck)
+    
+    // Rotas finais: /api/v1/auth/login, /api/v1/auth/refresh, /api/v1/health
+    // (assumindo SERVER_ROUTE_PREFIX=/api/v1 no .env)
+    
+    server.Start()
+}
+```
+
+### Context Helpers Disponíveis
+
+Todas as rotas customizadas têm acesso aos mesmos helpers que as rotas OData:
+
+```go
+func Login(c fiber.Ctx) error {
+    // ✅ Acesso à conexão SQL
+    conn := odata.GetConnection(c)
+    if conn == nil {
+        return c.Status(500).JSON(fiber.Map{"error": "Banco não disponível"})
+    }
+    
+    // ✅ Acesso ao DatabaseProvider
+    provider := odata.GetProvider(c)
+    
+    // ✅ Acesso ao ObjectManager (ORM)
+    manager := odata.GetObjectManager(c)
+    
+    // ✅ Criar novo ObjectManager
+    newManager := odata.CreateObjectManager(c)
+    
+    // ✅ Acesso ao pool multi-tenant (se habilitado)
+    pool := odata.GetConnectionPool(c)
+    
+    // Usar conexão normalmente
+    var user User
+    err := conn.QueryRow("SELECT * FROM users WHERE email = $1", email).Scan(...)
+    
+    return c.JSON(fiber.Map{"token": "..."})
+}
+```
+
+### Métodos Disponíveis
+
+```go
+// HTTP Methods com prefixo automático
+server.Get(path, handlers...)    // GET request
+server.Post(path, handlers...)   // POST request
+server.Put(path, handlers...)    // PUT request
+server.Delete(path, handlers...) // DELETE request
+server.Patch(path, handlers...)  // PATCH request
+server.Head(path, handlers...)   // HEAD request
+server.Options(path, handlers...) // OPTIONS request
+server.All(path, handlers...)    // ALL methods
+
+// Custom methods
+server.Add([]string{"GET", "POST"}, path, handlers...)
+```
+
+### Middlewares Customizados
+
+Você pode adicionar middlewares às rotas customizadas:
+
+```go
+// Middleware de exemplo
+func LogMiddleware(c fiber.Ctx) error {
+    log.Printf("Request: %s %s", c.Method(), c.Path())
+    return c.Next()
+}
+
+// Aplicar middleware em rota específica
+server.Post("/auth/login", LogMiddleware, Login)
+
+// Aplicar middleware em todas as rotas
+server.Use(LogMiddleware)
+```
+
+### Exemplo Completo: Sistema de Autenticação
+
+```go
+package main
+
+import (
+    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/gofiber/fiber/v3"
+)
+
+type LoginRequest struct {
+    Username string `json:"username"`
+    Password string `json:"password"`
+}
+
+func Login(c fiber.Ctx) error {
+    var req LoginRequest
+    if err := c.BodyParser(&req); err != nil {
+        return c.Status(400).JSON(fiber.Map{"error": "Dados inválidos"})
+    }
+
+    // ✅ Usar context helper para acessar banco
+    conn := odata.GetConnection(c)
+    if conn == nil {
+        return c.Status(500).JSON(fiber.Map{"error": "Banco não disponível"})
+    }
+
+    // Buscar usuário
+    var userID int
+    var passwordHash string
+    err := conn.QueryRow(`
+        SELECT id, password_hash 
+        FROM users WHERE email = $1
+    `, req.Username).Scan(&userID, &passwordHash)
+
+    if err != nil {
+        return c.Status(401).JSON(fiber.Map{"error": "Credenciais inválidas"})
+    }
+
+    // Validar senha (use bcrypt em produção)
+    // ...
+
+    // Gerar JWT
+    accessToken, _ := odata.GenerateJWT(map[string]interface{}{
+        "user_id": userID,
+        "email":   req.Username,
+    })
+
+    return c.JSON(fiber.Map{
+        "access_token": accessToken,
+        "token_type":   "Bearer",
+    })
+}
+
+func main() {
+    server := odata.NewServer()
+    
+    // ✅ Rotas customizadas simplificadas
+    server.Post("/auth/login", Login)
+    
+    // Entidades protegidas com JWT
+    jwtMiddleware := server.NewRouterJWTAuth()
+    server.RegisterEntity("Users", User{}, odata.WithMiddleware(jwtMiddleware))
+    
+    server.Start()
+}
+```
+
+### Comparação: Antes vs Depois
+
+**Antes (Complexo):**
+```go
+router := server.GetRouter()
+prefix := server.GetConfig().RoutePrefix
+dbMiddleware := server.DatabaseMiddleware()
+router.Post(prefix+"/auth/login", dbMiddleware, Login)
+```
+
+**Depois (Simples):**
+```go
+server.Post("/auth/login", Login)  // Tudo automático!
+```
+
+### Vantagens
+
+- ✅ **Prefixo Automático**: Aplicado automaticamente baseado em `SERVER_ROUTE_PREFIX`
+- ✅ **Context Completo**: Todos os helpers (Connection, Provider, ObjectManager) disponíveis
+- ✅ **Middlewares Globais**: Aplicados automaticamente (DatabaseMiddleware, RateLimiter, etc.)
+- ✅ **API Consistente**: Mesma experiência das rotas OData
+- ✅ **Menos Código**: Não precisa manipular router, prefixo ou middlewares manualmente
+
+### Endpoint de Diagnóstico
+
+Para verificar se todos os context helpers estão funcionando, crie um endpoint de teste:
+
+```go
+func TestContextHelpers(c fiber.Ctx) error {
+    result := fiber.Map{
+        "tests": fiber.Map{
+            "GetConnection": fiber.Map{
+                "available": odata.GetConnection(c) != nil,
+            },
+            "GetProvider": fiber.Map{
+                "available": odata.GetProvider(c) != nil,
+            },
+            "GetObjectManager": fiber.Map{
+                "available": odata.GetObjectManager(c) != nil,
+            },
+            "CreateObjectManager": fiber.Map{
+                "available": odata.CreateObjectManager(c) != nil,
+            },
+            "GetConnectionPool": fiber.Map{
+                "available": odata.GetConnectionPool(c) != nil,
+            },
+        },
+    }
+    
+    // Testar query se conexão disponível
+    if conn := odata.GetConnection(c); conn != nil {
+        var version string
+        err := conn.QueryRow("SELECT version()").Scan(&version)
+        result["database_test"] = fiber.Map{
+            "success": err == nil,
+            "version": version,
+        }
+    }
+    
+    return c.JSON(result)
+}
+
+func main() {
+    server := odata.NewServer()
+    server.Get("/test/context", TestContextHelpers)
+    server.Start()
+}
+```
+
+**Teste:**
+```bash
+curl http://localhost:8080/api/v1/test/context
+```
+
+**Se algum helper retornar `available: false`:**
+- Verifique se o arquivo `.env` existe e está configurado
+- Confirme que o banco de dados está acessível
+- Veja logs do servidor para mais detalhes
+
+### Ver Também
+
+- [Exemplo Engage](examples/engage/) - Sistema completo com autenticação JWT e rotas customizadas (inclui endpoint de diagnóstico)
+- [Exemplo JWT](examples/jwt/) - JWT básico
+- [Service Operations](#-service-operations) - Para lógica de negócio mais complexa
 
 ## 💾 Bancos de Dados Suportados
 
