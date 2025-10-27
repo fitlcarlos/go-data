@@ -18,7 +18,9 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - [Rate Limiting](#-rate-limiting)
 - [Multi-Tenant](#-multi-tenant)
 - [Eventos de Entidade](#-eventos-de-entidade)
+- [ObjectManager (ORM)](#-objectmanager-orm)
 - [Service Operations](#-service-operations)
+- [Configuração Programática](#-configuração-programática)
 - [Mapeamento de Entidades](#-mapeamento-de-entidades)
 - [Bancos de Dados Suportados](#-bancos-de-dados-suportados)
 - [Endpoints OData](#-endpoints-odata)
@@ -83,6 +85,15 @@ Ela oferece suporte completo ao formato JSON, inclui um servidor embutido com [F
 - **Otimização N+1 para $expand**: Usa batching automático para evitar múltiplas queries
 - **String Builder**: Concatenação otimizada em query building
 - **Benchmarks completos**: Suite de testes de performance com profiling
+
+### 🗄️ **ObjectManager (ORM)**
+- Sistema ORM completo similar ao TObjectManager do Aurelius
+- Identity Mapping e cache automático de entidades
+- Change Tracking para detectar modificações
+- Cached Updates com operações em lote
+- Gerenciamento de transações integrado
+- Métodos: Find, Save, Update, Remove, Merge, Flush
+- Integração transparente com eventos
 
 ### 🛡️ **Rate Limiting**
 - Controle de taxa de requisições por IP, usuário ou API key
@@ -510,6 +521,262 @@ config.TLSConfig = &tls.Config{
 config.CertFile = "server.crt"
 config.CertKeyFile = "server.key"
 ```
+
+## 🔧 Configuração Programática
+
+O Go-Data oferece uma API fluente para configurar o servidor programaticamente após sua criação, permitindo sobrescrever configurações do `.env` ou aplicar configurações dinâmicas.
+
+### Métodos Setter Fluentes
+
+Todos os métodos setter retornam `*Server`, permitindo encadeamento (method chaining):
+
+#### Configurações Básicas
+
+```go
+server := odata.NewServer()
+
+server.SetPort(9000).
+    SetHost("0.0.0.0").
+    SetRoutePrefix("/api/v2")
+```
+
+#### CORS
+
+```go
+server.SetCORS(true).
+    SetAllowedOrigins([]string{"https://example.com", "https://app.example.com"}).
+    SetAllowedMethods([]string{"GET", "POST", "PUT", "DELETE"}).
+    SetAllowedHeaders([]string{"Content-Type", "Authorization", "X-Custom-Header"})
+```
+
+#### Logging
+
+```go
+server.SetEnableLogging(true).
+    SetLogLevel("DEBUG")
+```
+
+#### Limites e Timeouts
+
+```go
+import "time"
+
+server.SetMaxRequestSize(20 * 1024 * 1024). // 20MB
+    SetShutdownTimeout(60 * time.Second)
+```
+
+#### TLS/HTTPS
+
+```go
+server.SetTLS("certs/server.crt", "certs/server.key")
+```
+
+#### Rate Limiting
+
+```go
+// Habilita rate limiting com 200 req/min e burst de 50
+server.SetRateLimit(200, 50)
+
+// Desabilita rate limiting
+server.DisableRateLimit()
+```
+
+#### Security Headers
+
+```go
+// Habilita security headers com configuração padrão
+server.SetSecurityHeaders(odata.DefaultSecurityHeadersConfig())
+
+// Configuração estrita (produção)
+server.SetSecurityHeaders(odata.StrictSecurityHeadersConfig())
+
+// Configuração relaxada (desenvolvimento)
+server.SetSecurityHeaders(odata.RelaxedSecurityHeadersConfig())
+
+// Desabilita security headers
+server.SetSecurityHeaders(odata.DisableSecurityHeaders())
+```
+
+#### Audit Logging
+
+```go
+auditConfig := &odata.AuditLogConfig{
+    Enabled:  true,
+    LogType:  "file",
+    FilePath: "/var/log/godata-audit.log",
+    Format:   "json",
+}
+
+server.SetAuditLog(auditConfig)
+```
+
+### Sobrescrevendo Configurações do .env
+
+Um caso de uso comum é carregar configurações básicas do `.env` e sobrescrever dinamicamente:
+
+```go
+// 1. Carrega configurações do .env automaticamente
+server := odata.NewServer()
+
+// 2. Sobrescreve configurações via código (prioridade sobre .env)
+server.SetPort(9000).                  // Override SERVER_PORT
+    SetHost("0.0.0.0").                // Override SERVER_HOST
+    SetRoutePrefix("/api/v2").         // Override SERVER_ROUTE_PREFIX
+    SetRateLimit(500, 100)             // Override rate limit
+
+// 3. Registra entidades
+server.RegisterEntity("Users", User{})
+
+// 4. Inicia - usa configurações mescladas (env + código)
+server.Start()
+```
+
+### Configuração Condicional
+
+Você pode aplicar configurações diferentes baseado em ambiente:
+
+```go
+server := odata.NewServer()
+
+// Configuração baseada em ambiente
+env := os.Getenv("APP_ENV")
+
+if env == "production" {
+    server.SetHost("0.0.0.0").
+        SetPort(443).
+        SetTLS("/etc/ssl/cert.pem", "/etc/ssl/key.pem").
+        SetSecurityHeaders(odata.StrictSecurityHeadersConfig()).
+        SetRateLimit(100, 20).
+        SetLogLevel("WARN")
+} else if env == "development" {
+    server.SetHost("localhost").
+        SetPort(3000).
+        SetSecurityHeaders(odata.RelaxedSecurityHeadersConfig()).
+        DisableRateLimit().
+        SetLogLevel("DEBUG")
+}
+
+server.Start()
+```
+
+### Acesso às Configurações
+
+Você também pode ler as configurações atuais:
+
+```go
+// Obtém a configuração completa
+config := server.GetConfig()
+
+// Acessa valores específicos
+port := config.Port
+host := config.Host
+prefix := config.RoutePrefix
+
+// Modifica e aplica
+config.Port = 9000
+// As mudanças são aplicadas imediatamente
+```
+
+### Exemplo Completo: Configuração Avançada
+
+```go
+package main
+
+import (
+    "log"
+    "os"
+    "time"
+    
+    "github.com/fitlcarlos/go-data/pkg/odata"
+)
+
+func main() {
+    // 1. Carrega .env automaticamente
+    server := odata.NewServer()
+    
+    // 2. Aplica configurações programáticas
+    server.
+        // Servidor
+        SetPort(8080).
+        SetHost("0.0.0.0").
+        SetRoutePrefix("/api/v1").
+        
+        // CORS
+        SetCORS(true).
+        SetAllowedOrigins([]string{
+            "https://app.example.com",
+            "https://admin.example.com",
+        }).
+        
+        // Segurança
+        SetSecurityHeaders(odata.StrictSecurityHeadersConfig()).
+        SetRateLimit(200, 50).
+        
+        // Performance
+        SetMaxRequestSize(10 * 1024 * 1024).
+        SetShutdownTimeout(30 * time.Second).
+        
+        // Logging
+        SetEnableLogging(true).
+        SetLogLevel("INFO")
+    
+    // 3. Configuração condicional para TLS
+    if os.Getenv("ENABLE_TLS") == "true" {
+        server.SetTLS(
+            os.Getenv("TLS_CERT_FILE"),
+            os.Getenv("TLS_KEY_FILE"),
+        )
+    }
+    
+    // 4. Audit logging para produção
+    if os.Getenv("APP_ENV") == "production" {
+        server.SetAuditLog(&odata.AuditLogConfig{
+            Enabled:  true,
+            LogType:  "file",
+            FilePath: "/var/log/api-audit.log",
+            Format:   "json",
+        })
+    }
+    
+    // 5. Registra entidades
+    server.RegisterEntity("Users", User{})
+    server.RegisterEntity("Products", Product{})
+    
+    // 6. Inicia servidor
+    log.Fatal(server.Start())
+}
+```
+
+### Prioridade de Configuração
+
+A ordem de prioridade para configurações é:
+
+1. **Valores padrão** (DefaultServerConfig)
+2. **Arquivo .env** (se encontrado e válido)
+3. **Setters programáticos** (maior prioridade)
+
+Exemplo:
+
+```bash
+# .env
+SERVER_PORT=8080
+RATE_LIMIT_ENABLED=true
+```
+
+```go
+server := odata.NewServer()  // Carrega PORT=8080 do .env
+server.SetPort(9000)         // Override: agora usa PORT=9000
+```
+
+### Vantagens da Configuração Programática
+
+✅ **Flexibilidade**: Ajuste configurações em tempo de execução  
+✅ **Ambiente-específico**: Diferentes configs para dev/prod  
+✅ **Type-safe**: Erros em tempo de compilação  
+✅ **Encadeamento**: API fluente e legível  
+✅ **Override de .env**: Mantém defaults mas permite exceções  
+
+Veja o exemplo completo em [`examples/config_override/`](examples/config_override/) que demonstra todas as técnicas de configuração.
 
 ## 🔐 Autenticação JWT
 
@@ -1349,37 +1616,187 @@ server.GetConfig().ValidationConfig = config
 
 ### Security Headers
 
-Headers de segurança são **habilitados por padrão**:
+O Go-Data inclui headers de segurança **habilitados por padrão** para proteção contra ataques comuns.
+
+#### Headers Aplicados por Padrão
 
 ```http
 X-Frame-Options: DENY
 X-Content-Type-Options: nosniff
 X-XSS-Protection: 1; mode=block
+Content-Security-Policy: default-src 'self'; script-src 'self'; ...
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+X-Permitted-Cross-Domain-Policies: none
+X-Download-Options: noopen
+```
+
+#### Configurações Predefinidas (Helpers)
+
+O Go-Data oferece funções helper para diferentes perfis de segurança:
+
+```go
+// 1. Padrão (Balanceado) - Recomendado para maioria dos casos
+config := odata.DefaultSecurityHeadersConfig()
+server.SetSecurityHeaders(config)
+```
+
+**Características:**
+- ✅ Proteção contra clickjacking (X-Frame-Options: DENY)
+- ✅ Previne MIME type sniffing
+- ✅ Content Security Policy moderado
+- ✅ HSTS com 1 ano
+- ✅ Referrer policy balanceado
+
+```go
+// 2. Estrito (Máxima Segurança) - Para aplicações críticas
+config := odata.StrictSecurityHeadersConfig()
+server.SetSecurityHeaders(config)
+```
+
+**Características:**
+- 🔒 CSP muito restritivo (`default-src 'none'`)
+- 🔒 HSTS com 2 anos + preload
+- 🔒 Bloqueia todas as features do browser
+- 🔒 Referrer policy: `no-referrer`
+- 🔒 Frame-Options: DENY
+- ⚠️  Pode quebrar funcionalidades se não configurado corretamente
+
+```go
+// 3. Relaxado (Desenvolvimento) - Para ambiente de desenvolvimento
+config := odata.RelaxedSecurityHeadersConfig()
+server.SetSecurityHeaders(config)
+```
+
+**Características:**
+- 🟢 CSP permissivo (`default-src 'self' 'unsafe-inline' 'unsafe-eval'`)
+- 🟢 Permite iframes da mesma origem
+- 🟢 HSTS desabilitado (para facilitar testes HTTP)
+- 🟢 Todas as features do browser permitidas
+- ⚠️  **NÃO use em produção!**
+
+```go
+// 4. Desabilitado - Remove todos os headers de segurança
+config := odata.DisableSecurityHeaders()
+server.SetSecurityHeaders(config)
+```
+
+**Quando usar:**
+- ⚠️  Apenas quando headers conflitam com infraestrutura existente
+- ⚠️  Quando proxy/gateway já adiciona os headers
+- ⚠️  **Não recomendado** na maioria dos casos
+
+#### Configuração Customizada
+
+Para controle total sobre os headers:
+
+```go
+config := &odata.SecurityHeadersConfig{
+    Enabled:  true,
+    
+    // Proteção Clickjacking
+    XFrameOptions: "SAMEORIGIN",  // ou "DENY", "ALLOW-FROM https://example.com"
+    
+    // Prevenir MIME sniffing
+    XContentTypeOptions: "nosniff",
+    
+    // XSS Protection (deprecated mas ainda útil)
+    XXSSProtection: "1; mode=block",
+    
+    // Content Security Policy (CSP)
+    ContentSecurityPolicy: `
+        default-src 'self';
+        script-src 'self' https://cdn.example.com;
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: https:;
+        font-src 'self';
+        connect-src 'self' https://api.example.com;
+        frame-ancestors 'none';
+    `,
+    
+    // Forçar HTTPS (apenas se conexão já for HTTPS)
+    StrictTransportSecurity: "max-age=31536000; includeSubDomains; preload",
+    
+    // Controlar informações de referrer
+    ReferrerPolicy: "strict-origin-when-cross-origin",
+    // Opções: no-referrer, no-referrer-when-downgrade, same-origin,
+    //         origin, strict-origin, origin-when-cross-origin
+    
+    // Controlar features do browser
+    PermissionsPolicy: "camera=(), microphone=(), geolocation=(self), payment=()",
+    
+    // Headers customizados adicionais
+    CustomHeaders: map[string]string{
+        "X-Custom-Header": "value",
+        "X-API-Version":   "1.0",
+    },
+}
+
+server.SetSecurityHeaders(config)
+```
+
+#### Comparação dos Perfis
+
+| Recurso | Padrão | Estrito | Relaxado |
+|---------|--------|---------|----------|
+| **X-Frame-Options** | DENY | DENY | SAMEORIGIN |
+| **CSP default-src** | 'self' | 'none' | 'self' 'unsafe-inline' 'unsafe-eval' |
+| **HSTS** | 1 ano | 2 anos + preload | Desabilitado |
+| **Permissions** | Básicas bloqueadas | Todas bloqueadas | Todas permitidas |
+| **Referrer-Policy** | strict-origin-when-cross-origin | no-referrer | no-referrer-when-downgrade |
+| **Produção** | ✅ Sim | ✅ Sim (apps críticas) | ❌ Não |
+| **Desenvolvimento** | ⚠️  Pode dificultar | ❌ Muito restritivo | ✅ Sim |
+
+#### Usando Helpers com Setters
+
+Combine helpers com API fluente:
+
+```go
+server := odata.NewServer()
+
+// Ambiente de produção
+if os.Getenv("APP_ENV") == "production" {
+    server.SetSecurityHeaders(odata.StrictSecurityHeadersConfig()).
+        SetRateLimit(100, 20).
+        SetAuditLog(&odata.AuditLogConfig{Enabled: true})
+} else {
+    // Desenvolvimento
+    server.SetSecurityHeaders(odata.RelaxedSecurityHeadersConfig()).
+        DisableRateLimit()
+}
+```
+
+#### Verificar Headers Aplicados
+
+Você pode verificar os headers aplicados fazendo uma requisição:
+
+```bash
+curl -I http://localhost:8080/odata/Users
+
+HTTP/1.1 200 OK
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 1; mode=block
 Content-Security-Policy: default-src 'self'; ...
-Strict-Transport-Security: max-age=31536000
+Strict-Transport-Security: max-age=31536000; includeSubDomains
 Referrer-Policy: strict-origin-when-cross-origin
 Permissions-Policy: camera=(), microphone=(), ...
 ```
 
-**Configurações disponíveis:**
+#### Melhores Práticas
 
-```go
-// Padrão (Balanceado)
-config := odata.DefaultSecurityHeadersConfig()
-
-// Estrito (Máxima Segurança)
-config := odata.StrictSecurityHeadersConfig()
-
-// Relaxado (Desenvolvimento)
-config := odata.RelaxedSecurityHeadersConfig()
-
-// Desabilitar (não recomendado)
-config := odata.DisableSecurityHeaders()
-```
+1. **Use Strict em Produção**: Para APIs críticas, use `StrictSecurityHeadersConfig()`
+2. **Customize CSP**: Ajuste CSP para suas necessidades específicas
+3. **HSTS apenas em HTTPS**: HSTS só funciona em conexões HTTPS
+4. **Teste Thoroughly**: Headers estritos podem quebrar funcionalidades
+5. **Monitore Violations**: Configure CSP report-uri para monitorar violações
 
 ### Audit Logging
 
-Sistema completo de auditoria para rastrear todas operações críticas:
+Sistema completo de auditoria para rastrear todas operações críticas com configuração flexível.
+
+#### Configuração Básica
 
 ```go
 config := &odata.AuditLogConfig{
@@ -1391,28 +1808,167 @@ config := &odata.AuditLogConfig{
 server.GetConfig().AuditLogConfig = config
 ```
 
-**Operações Auditadas:**
-- ✅ CREATE, UPDATE, DELETE (operações de escrita)
-- ✅ AUTH_SUCCESS, AUTH_FAILURE (autenticação)
-- ✅ UNAUTHORIZED (tentativas de acesso negadas)
+#### AuditLogConfig Completo
 
-**Exemplo de Log Entry:**
+Configure detalhadamente o sistema de auditoria:
+
+```go
+config := &odata.AuditLogConfig{
+    // Configuração Básica
+    Enabled:  true,                    // Habilitar audit logging (padrão: false)
+    LogType:  "file",                  // Tipo: "file", "stdout", "stderr", "none" (padrão: "stdout")
+    FilePath: "/var/log/api-audit.log", // Caminho do arquivo (quando LogType = "file")
+    Format:   "json",                  // Formato: "json" ou "text" (padrão: "json")
+    
+    // Performance
+    BufferSize: 100,                   // Buffer para escrita assíncrona (padrão: 100)
+    AsyncWrite: true,                  // Escrita assíncrona (não bloqueia requisição)
+    FlushInterval: 5 * time.Second,    // Intervalo para flush do buffer
+    
+    // Filtros de Operações
+    LoggedOperations: []odata.AuditOperation{  // Operações a logar (vazio = todas)
+        odata.AuditOpCreate,
+        odata.AuditOpUpdate,
+        odata.AuditOpDelete,
+        odata.AuditOpAuthFailure,
+        odata.AuditOpUnauthorized,
+    },
+    
+    // Controle de Dados
+    IncludeSensitiveData: false,       // Incluir dados sensíveis (não recomendado em prod)
+    IncludeRequestBody:   false,       // Incluir corpo da requisição completo
+    IncludeResponseBody:  false,       // Incluir corpo da resposta
+    MaxBodySize:          1024,        // Tamanho máximo de body a logar (bytes)
+    
+    // Campos Adicionais
+    IncludeHeaders:       []string{    // Headers específicos a incluir
+        "User-Agent",
+        "X-Forwarded-For",
+        "X-Request-ID",
+    },
+    ExcludeFields:        []string{    // Campos a excluir do log
+        "password",
+        "token",
+        "secret",
+    },
+    
+    // Rotação de Logs (quando LogType = "file")
+    MaxFileSize:          100 * 1024 * 1024, // 100MB - tamanho máximo por arquivo
+    MaxBackups:           10,                 // Número de arquivos de backup
+    MaxAge:               30,                 // Dias para manter logs antigos
+    Compress:             true,               // Comprimir logs antigos
+}
+
+server.SetAuditLog(config)
+```
+
+#### Operações Auditadas
+
+Tipos de operações que podem ser auditadas:
+
+```go
+const (
+    AuditOpCreate       = "CREATE"           // Criação de entidade
+    AuditOpUpdate       = "UPDATE"           // Atualização de entidade
+    AuditOpDelete       = "DELETE"           // Exclusão de entidade
+    AuditOpRead         = "READ"             // Leitura de entidade
+    AuditOpAuthSuccess  = "AUTH_SUCCESS"     // Login bem-sucedido
+    AuditOpAuthFailure  = "AUTH_FAILURE"     // Falha de autenticação
+    AuditOpAuthLogout   = "AUTH_LOGOUT"      // Logout
+    AuditOpUnauthorized = "UNAUTHORIZED"     // Acesso negado
+)
+```
+
+#### Exemplo de Log Entry (JSON)
 
 ```json
 {
-  "timestamp": "2025-10-18T10:30:45Z",
+  "timestamp": "2025-10-27T10:30:45Z",
+  "user_id": "42",
   "username": "john.doe",
   "ip": "192.168.1.100",
   "method": "POST",
   "path": "/odata/Users",
   "entity_name": "Users",
+  "entity_id": "123",
   "operation": "CREATE",
   "success": true,
-  "duration_ms": 45
+  "error_message": "",
+  "duration_ms": 45,
+  "user_agent": "Mozilla/5.0...",
+  "request_id": "abc-123-def",
+  "tenant_id": "empresa_a",
+  "extra": {
+    "changes": ["name", "email"],
+    "ip_location": "São Paulo, BR"
+  }
 }
 ```
 
-**Usando com Autenticação:**
+#### Exemplo de Log Entry (Text)
+
+```
+2025-10-27 10:30:45 [CREATE] john.doe (192.168.1.100) -> POST /odata/Users [SUCCESS] 45ms
+2025-10-27 10:30:50 [UPDATE] admin (192.168.1.101) -> PATCH /odata/Users(123) [SUCCESS] 32ms
+2025-10-27 10:30:55 [AUTH_FAILURE] - (192.168.1.150) -> POST /auth/login [FAILED] invalid credentials
+```
+
+#### Configurações Predefinidas
+
+```go
+// Desenvolvimento (verboso)
+devConfig := &odata.AuditLogConfig{
+    Enabled:              true,
+    LogType:              "stdout",
+    Format:               "text",
+    IncludeSensitiveData: true,     // OK para dev
+    IncludeRequestBody:   true,
+    IncludeResponseBody:  true,
+    LoggedOperations:     []odata.AuditOperation{}, // Todas
+}
+
+// Produção (seguro e performático)
+prodConfig := &odata.AuditLogConfig{
+    Enabled:              true,
+    LogType:              "file",
+    FilePath:             "/var/log/api/audit.log",
+    Format:               "json",
+    BufferSize:           200,
+    AsyncWrite:           true,
+    IncludeSensitiveData: false,     // Nunca em produção!
+    IncludeRequestBody:   false,
+    LoggedOperations: []odata.AuditOperation{
+        odata.AuditOpCreate,
+        odata.AuditOpUpdate,
+        odata.AuditOpDelete,
+        odata.AuditOpAuthFailure,
+        odata.AuditOpUnauthorized,
+    },
+    MaxFileSize:          100 * 1024 * 1024,
+    MaxBackups:           30,
+    MaxAge:               90,
+    Compress:             true,
+}
+
+// Compliance (máxima auditoria)
+complianceConfig := &odata.AuditLogConfig{
+    Enabled:              true,
+    LogType:              "file",
+    FilePath:             "/var/log/audit/compliance.log",
+    Format:               "json",
+    IncludeSensitiveData: false,
+    IncludeRequestBody:   true,     // Logar tudo (exceto sensível)
+    LoggedOperations:     []odata.AuditOperation{}, // Todas as operações
+    MaxFileSize:          500 * 1024 * 1024,
+    MaxBackups:           100,
+    MaxAge:               365,       // 1 ano
+    Compress:             true,
+}
+
+server.SetAuditLog(prodConfig)
+```
+
+#### Usando com Autenticação
 
 ```go
 jwtAuth := odata.NewJwtAuth(config)
@@ -1423,9 +1979,72 @@ router.Get("/protected",
     handler)
 ```
 
+#### Audit Logging Customizado
+
+Você pode criar seu próprio audit logger implementando a interface:
+
+```go
+type CustomAuditLogger struct {
+    // Seus campos
+}
+
+func (c *CustomAuditLogger) Log(entry odata.AuditLogEntry) error {
+    // Enviar para sistema externo (Elasticsearch, Splunk, etc)
+    return sendToElasticsearch(entry)
+}
+
+func (c *CustomAuditLogger) Close() error {
+    // Cleanup
+    return nil
+}
+
+// Usar custom logger
+server.GetConfig().AuditLogConfig.CustomLogger = &CustomAuditLogger{}
+```
+
+#### Consultar Logs Programaticamente
+
+Se usar arquivo JSON, você pode consultar os logs facilmente:
+
+```bash
+# Buscar falhas de autenticação
+grep '"operation":"AUTH_FAILURE"' audit.log | jq .
+
+# Buscar operações de um usuário específico
+grep '"username":"john.doe"' audit.log | jq .
+
+# Buscar operações em entidade específica
+grep '"entity_name":"Users"' audit.log | jq .
+
+# Buscar operações lentas (> 1 segundo)
+jq 'select(.duration_ms > 1000)' audit.log
+```
+
+#### Integração com SIEM
+
+Para integração com sistemas SIEM (Splunk, ELK, etc):
+
+```go
+// Configurar para stdout e redirecionar para SIEM
+config := &odata.AuditLogConfig{
+    Enabled:  true,
+    LogType:  "stdout",
+    Format:   "json",
+    IncludeHeaders: []string{
+        "X-Forwarded-For",
+        "User-Agent",
+        "X-Request-ID",
+    },
+}
+
+// No Docker/Kubernetes, os logs stdout são automaticamente coletados
+```
+
 ### Input Validation
 
-Validação automática de todos os inputs OData:
+O Go-Data oferece validação automática e configurável para todos os inputs OData, protegendo contra SQL Injection, XSS e outros ataques.
+
+#### Funções de Validação
 
 ```go
 // Validar filter
@@ -1444,11 +2063,196 @@ err := odata.ValidateExpandDepth(expandOptions, 5, 1)
 safe := odata.SanitizeInput(userInput, config)
 ```
 
-**Padrões Detectados Automaticamente:**
-- SQL Injection: `UNION`, `DROP`, `--`, `1=1`, etc
-- XSS: `<script>`, `<iframe>`, `javascript:`, `onclick=`, etc
+#### ValidationConfig Completo
+
+Configure limites e regras de validação:
+
+```go
+config := &odata.ValidationConfig{
+    // Limites de Query
+    MaxFilterLength:     1000,              // Tamanho máximo do $filter (padrão: 1000)
+    MaxSelectFields:     50,                // Máximo de campos em $select (padrão: 50)
+    MaxExpandDepth:      5,                 // Profundidade máxima de $expand (padrão: 5)
+    MaxTopValue:         1000,              // Valor máximo de $top (padrão: 1000)
+    MaxSkipValue:        10000,             // Valor máximo de $skip (padrão: 10000)
+    MaxOrderByFields:    10,                // Máximo de campos em $orderby (padrão: 10)
+    
+    // Funções Permitidas
+    AllowedFunctions:    []string{          // Funções OData permitidas
+        "contains", "startswith", "endswith",
+        "length", "indexof", "substring",
+        "tolower", "toupper", "trim",
+        "year", "month", "day", "hour", "minute", "second",
+        "round", "floor", "ceiling",
+    },
+    
+    // Padrões Bloqueados (Regex)
+    BlockedPatterns:     []string{          // Padrões perigosos a serem bloqueados
+        `(?i)(union|select|insert|update|delete|drop|create|alter|exec|execute)`,
+        `(?i)(script|iframe|object|embed|onclick|onerror|onload)`,
+        `--|;--|\|\||&&`,
+        `\$\{.*\}`,                         // Template injection
+        `<\?php`,                           // PHP injection
+    },
+    
+    // Opções de Sanitização
+    EnableSanitization:  true,              // Habilitar sanitização de inputs (padrão: true)
+    StrictPropertyNames: true,              // Validar nomes de propriedades (padrão: true)
+    AllowWildcards:      false,             // Permitir wildcards em filtros (padrão: false)
+    CaseSensitive:       false,             // Case-sensitive para funções (padrão: false)
+    
+    // Proteção DoS
+    MaxQueryComplexity:  1000,              // Complexidade máxima de query (padrão: 1000)
+    MaxArrayElements:    100,               // Máximo de elementos em arrays (padrão: 100)
+}
+
+// Aplicar configuração
+server.GetConfig().ValidationConfig = config
+
+// Ou usar configuração padrão
+server.GetConfig().ValidationConfig = odata.DefaultValidationConfig()
+```
+
+#### Configurações Predefinidas
+
+```go
+// Desenvolvimento (permissivo)
+devConfig := &odata.ValidationConfig{
+    MaxFilterLength:     2000,
+    MaxSelectFields:     100,
+    MaxExpandDepth:      10,
+    MaxTopValue:         5000,
+    StrictPropertyNames: false,
+    AllowWildcards:      true,
+}
+
+// Produção (restritivo)
+prodConfig := &odata.ValidationConfig{
+    MaxFilterLength:     500,
+    MaxSelectFields:     20,
+    MaxExpandDepth:      3,
+    MaxTopValue:         100,
+    MaxSkipValue:        1000,
+    StrictPropertyNames: true,
+    EnableSanitization:  true,
+    AllowWildcards:      false,
+}
+
+// Alta Performance (balanceado)
+perfConfig := &odata.ValidationConfig{
+    MaxFilterLength:     1000,
+    MaxTopValue:         500,
+    MaxExpandDepth:      4,
+    EnableSanitization:  true,
+    MaxQueryComplexity:  500,
+}
+
+server.GetConfig().ValidationConfig = prodConfig
+```
+
+#### Padrões Detectados Automaticamente
+
+**SQL Injection:**
+- `UNION`, `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`
+- `EXEC`, `EXECUTE`, `xp_`, `sp_`
+- `--`, `;--`, `||`, `&&`
+- `1=1`, `' OR '1'='1`
+
+**XSS (Cross-Site Scripting):**
+- `<script>`, `</script>`, `<iframe>`, `</iframe>`
+- `javascript:`, `vbscript:`, `data:text/html`
+- `onclick=`, `onerror=`, `onload=`, `onmouseover=`
+- `<object>`, `<embed>`, `<applet>`
+
+**Template Injection:**
+- `${...}`, `{{...}}`, `<%...%>`
+- `{@...@}`, `[[...]]`
+
+**Path Traversal:**
+- `../`, `..\\`, `..\`
+- Sequências URL encoded
+
+**Outras Ameaças:**
+- Queries muito longas (DoS)
+- Profundidade excessiva de $expand (DoS)
 - Caracteres inválidos em nomes de propriedades
-- Queries muito longas (DoS prevention)
+- Arrays muito grandes (Memory DoS)
+
+#### Exemplo de Uso Completo
+
+```go
+package main
+
+import (
+    "github.com/fitlcarlos/go-data/pkg/odata"
+)
+
+func main() {
+    server := odata.NewServer()
+    
+    // Configurar validação rigorosa para produção
+    server.GetConfig().ValidationConfig = &odata.ValidationConfig{
+        MaxFilterLength:     800,
+        MaxSelectFields:     30,
+        MaxExpandDepth:      4,
+        MaxTopValue:         200,
+        StrictPropertyNames: true,
+        EnableSanitization:  true,
+        AllowedFunctions: []string{
+            "contains", "startswith", "endswith",
+            "tolower", "toupper",
+            "year", "month", "day",
+        },
+        BlockedPatterns: []string{
+            `(?i)(union|select|insert|update|delete)`,
+            `(?i)(script|iframe|onclick)`,
+            `--|;--|&&`,
+        },
+    }
+    
+    // Registrar entidades
+    server.RegisterEntity("Users", User{})
+    server.RegisterEntity("Products", Product{})
+    
+    // Iniciar servidor
+    server.Start()
+}
+```
+
+#### Validação Customizada por Entidade
+
+Você também pode validar inputs dentro de eventos:
+
+```go
+server.OnEntityInsertingGlobal(func(args odata.EventArgs) error {
+    insertArgs := args.(*odata.EntityInsertingArgs)
+    
+    // Validar campo específico
+    if name, ok := insertArgs.Data["name"].(string); ok {
+        config := server.GetConfig().ValidationConfig
+        
+        // Sanitizar
+        sanitized := odata.SanitizeInput(name, config)
+        
+        // Validar comprimento
+        if len(sanitized) > 100 {
+            args.Cancel("Nome muito longo")
+            return nil
+        }
+        
+        // Validar padrões
+        if err := odata.ValidateAgainstPatterns(sanitized, config.BlockedPatterns); err != nil {
+            args.Cancel("Nome contém caracteres inválidos")
+            return nil
+        }
+        
+        // Atualizar com valor sanitizado
+        insertArgs.Data["name"] = sanitized
+    }
+    
+    return nil
+})
+```
 
 ### Rate Limiting (Habilitado por Padrão)
 
@@ -2587,6 +3391,463 @@ Veja o exemplo completo em [`examples/events/`](examples/events/) que demonstra:
 - Tratamento de erros
 - Cancelamento de operações
 
+## 🗄️ ObjectManager (ORM)
+
+O Go-Data inclui um **ObjectManager** completo, similar ao `TObjectManager` do Aurelius/XData, oferecendo funcionalidades ORM avançadas para manipulação de entidades. Este componente implementa padrões como Identity Mapping, Change Tracking e Cached Updates.
+
+### Características Principais
+
+- ✅ **Identity Mapping**: Cache automático de entidades já carregadas
+- ✅ **Change Tracking**: Detecção automática de modificações
+- ✅ **Cached Updates**: Agrupa operações para execução em lote
+- ✅ **Transações**: Gerenciamento completo de transações
+- ✅ **Batching**: Otimização de operações em massa
+- ✅ **Integração com Eventos**: Acesso transparente via `EventContext`
+
+### Criando um ObjectManager
+
+#### Dentro de Eventos (Recomendado)
+
+O ObjectManager está disponível automaticamente no contexto de eventos:
+
+```go
+server.OnEntityInserting("Orders", func(args odata.EventArgs) error {
+    // Obtém o ObjectManager do contexto do evento
+    manager := args.Manager()
+    
+    // Agora você pode usar todas as funcionalidades do ORM
+    product, err := manager.Find("Products", "123")
+    if err != nil {
+        return err
+    }
+    
+    return nil
+})
+```
+
+#### Manualmente
+
+Para uso fora de eventos:
+
+```go
+import "context"
+
+// Obtém o provider do servidor
+provider := server.GetProvider()
+
+// Cria um ObjectManager
+ctx := context.Background()
+manager := odata.NewObjectManager(provider, ctx)
+
+// Ou a partir de um EventContext
+manager := odata.CreateFromEventContext(eventCtx)
+```
+
+### Operações CRUD Básicas
+
+#### Find - Buscar Entidade
+
+Busca uma entidade por ID, primeiro no cache, depois no banco:
+
+```go
+// Busca no cache e depois no banco
+user, err := manager.Find("Users", "42")
+if err != nil {
+    return err
+}
+
+// Busca apenas no cache (não toca o banco)
+cachedUser, err := manager.FindCached("Users", "42")
+```
+
+#### Save - Inserir Nova Entidade
+
+Insere uma nova entidade no banco de dados:
+
+```go
+newUser := map[string]interface{}{
+    "name":  "João Silva",
+    "email": "joao@example.com",
+    "age":   30,
+}
+
+err := manager.Save(newUser)
+if err != nil {
+    return err
+}
+
+// A entidade é automaticamente adicionada ao cache
+// e marcada como "attached" ao manager
+```
+
+#### Update - Atualizar Entidade
+
+Marca uma entidade para atualização:
+
+```go
+// Busca a entidade
+user, err := manager.Find("Users", "42")
+if err != nil {
+    return err
+}
+
+// Modifica os dados
+userData := user.(map[string]interface{})
+userData["email"] = "novo@example.com"
+
+// Marca para atualização
+err = manager.Update(user)
+
+// Persiste as mudanças
+err = manager.Flush(user)
+```
+
+#### Remove - Excluir Entidade
+
+Remove uma entidade do banco de dados:
+
+```go
+// Busca a entidade
+user, err := manager.Find("Users", "42")
+if err != nil {
+    return err
+}
+
+// Remove do banco
+err = manager.Remove(user)
+if err != nil {
+    return err
+}
+```
+
+#### SaveOrUpdate - Inteligente
+
+Salva se for nova ou atualiza se já existir:
+
+```go
+user := map[string]interface{}{
+    "id":    42,  // Se tem ID, atualiza
+    "name":  "João Silva",
+    "email": "joao@example.com",
+}
+
+err := manager.SaveOrUpdate(user)
+```
+
+### Identity Mapping & Cache
+
+O ObjectManager mantém um cache de entidades para evitar buscas duplicadas:
+
+```go
+// Primeira busca: vai ao banco
+user1, _ := manager.Find("Users", "42")
+
+// Segunda busca: retorna do cache
+user2, _ := manager.Find("Users", "42")
+
+// user1 e user2 são a mesma instância!
+```
+
+**Gerenciamento de Cache:**
+
+```go
+// Verifica se está no cache
+exists := manager.IsCached("Users", "42")
+
+// Verifica se está attached ao manager
+isAttached := manager.IsAttached(user)
+
+// Remove do cache
+manager.Evict(user)
+
+// Limpa todo o cache
+manager.ClearCache()
+```
+
+### Change Tracking
+
+O ObjectManager rastreia modificações nas entidades:
+
+```go
+// Busca a entidade
+user, _ := manager.Find("Users", "42")
+
+// Modifica
+userData := user.(map[string]interface{})
+userData["email"] = "novo@example.com"
+
+// Marca como modificada
+manager.Update(user)
+
+// Verifica se tem mudanças
+hasChanges := manager.HasChanges(user)  // true
+
+// Verifica se há alguma mudança pendente
+anyChanges := manager.HasAnyChanges()  // true
+
+// Obtém todas as entidades modificadas
+changed := manager.GetChangedObjects()
+```
+
+### Cached Updates (Operações em Lote)
+
+Para melhor performance, você pode habilitar o modo **Cached Updates** que agrupa operações:
+
+```go
+// Habilita cached updates
+manager.SetCachedUpdates(true)
+
+// Configura tamanho do batch
+manager.SetBatchSize(100)
+
+// Todas as operações são armazenadas em memória
+manager.Save(user1)
+manager.Save(user2)
+manager.Update(user3)
+manager.Remove(user4)
+
+// Verifica quantas operações estão pendentes
+count := manager.GetCachedCount()  // 4
+
+// Executa todas as operações de uma vez (em batch otimizado)
+err := manager.ApplyCachedUpdates()
+if err != nil {
+    // Se falhar, nenhuma operação é aplicada
+    return err
+}
+
+// Desabilita cached updates
+manager.SetCachedUpdates(false)
+```
+
+### Gerenciamento de Transações
+
+O ObjectManager oferece controle completo de transações:
+
+#### Transação Manual
+
+```go
+// Inicia transação
+tx, err := manager.BeginTransaction()
+if err != nil {
+    return err
+}
+
+// Executa operações
+manager.Save(entity1)
+manager.Update(entity2)
+
+// Commit ou Rollback
+if erro {
+    manager.RollbackTransaction(tx)
+} else {
+    manager.CommitTransaction(tx)
+}
+```
+
+#### Transação Automática (Recomendado)
+
+```go
+err := manager.WithTransaction(func(tx *odata.TxManager) error {
+    // Executa operações dentro da transação
+    manager.Save(entity1)
+    manager.Update(entity2)
+    manager.Remove(entity3)
+    
+    // Se retornar erro, rollback automático
+    if algumErro {
+        return fmt.Errorf("operação falhou")
+    }
+    
+    // Se retornar nil, commit automático
+    return nil
+})
+
+if err != nil {
+    log.Printf("Transação falhou: %v", err)
+}
+```
+
+### Merge - Sincronizar Entidade Detached
+
+O método `Merge` permite atualizar uma entidade que foi desanexada do manager:
+
+```go
+// Entidade vinda de outra fonte (ex: JSON do cliente)
+detachedUser := map[string]interface{}{
+    "id":    42,
+    "name":  "Nome Atualizado",
+    "email": "atualizado@example.com",
+}
+
+// Merge com a entidade no cache/banco
+mergedUser, err := manager.Merge(detachedUser)
+if err != nil {
+    return err
+}
+
+// A entidade no cache foi atualizada
+// e está marcada como modificada
+```
+
+### Flush - Persistir Mudanças
+
+```go
+// Flush de uma entidade específica
+err := manager.Flush(user)
+
+// Flush de todas as mudanças pendentes
+err := manager.FlushAll()
+```
+
+### Consultas Customizadas
+
+Para queries complexas, você pode executar SQL diretamente:
+
+```go
+// Executa query customizada
+query := "SELECT * FROM users WHERE age > ?"
+rows, err := manager.ExecuteQuery(query, 18)
+if err != nil {
+    return err
+}
+defer rows.Close()
+
+// Processa resultados
+for rows.Next() {
+    // ...
+}
+
+// Executa query dentro de transação
+tx, _ := manager.BeginTransaction()
+rows, err := manager.ExecuteQueryTransaction(tx, query, 18)
+```
+
+### Integração com Eventos
+
+O ObjectManager se integra perfeitamente com o sistema de eventos:
+
+```go
+server.OnEntityInserting("Orders", func(args odata.EventArgs) error {
+    // Obtém ObjectManager do contexto
+    manager := args.Manager()
+    
+    insertArgs := args.(*odata.EntityInsertingArgs)
+    productID := insertArgs.Data["product_id"]
+    
+    // Busca produto relacionado
+    product, err := manager.Find("Products", fmt.Sprintf("%v", productID))
+    if err != nil {
+        args.Cancel("Produto não encontrado")
+        return nil
+    }
+    
+    // Verifica estoque
+    productData := product.(map[string]interface{})
+    stock := productData["stock"].(int64)
+    quantity := insertArgs.Data["quantity"].(int64)
+    
+    if stock < quantity {
+        args.Cancel("Estoque insuficiente")
+        return nil
+    }
+    
+    // Atualiza estoque
+    productData["stock"] = stock - quantity
+    manager.Update(product)
+    manager.Flush(product)
+    
+    return nil
+})
+```
+
+### Exemplo Completo: Sistema de Pedidos
+
+```go
+func ProcessOrder(args odata.EventArgs) error {
+    manager := args.Manager()
+    insertArgs := args.(*odata.EntityInsertingArgs)
+    
+    // Inicia transação
+    return manager.WithTransaction(func(tx *odata.TxManager) error {
+        // 1. Busca o produto
+        productID := insertArgs.Data["product_id"]
+        product, err := manager.Find("Products", fmt.Sprintf("%v", productID))
+        if err != nil {
+            return fmt.Errorf("produto não encontrado: %w", err)
+        }
+        
+        // 2. Verifica estoque
+        productData := product.(map[string]interface{})
+        stock := productData["stock"].(int64)
+        quantity := insertArgs.Data["quantity"].(int64)
+        
+        if stock < quantity {
+            return fmt.Errorf("estoque insuficiente")
+        }
+        
+        // 3. Atualiza estoque
+        productData["stock"] = stock - quantity
+        manager.Update(product)
+        
+        // 4. Cria entrada de histórico
+        history := map[string]interface{}{
+            "product_id": productID,
+            "quantity":   -quantity,
+            "reason":     "VENDA",
+            "date":       time.Now(),
+        }
+        manager.Save(history)
+        
+        // 5. Aplica mudanças
+        manager.Flush(product)
+        
+        // Se tudo OK, commit automático
+        // Se erro, rollback automático
+        return nil
+    })
+}
+
+// Registra o evento
+server.OnEntityInserting("Orders", ProcessOrder)
+```
+
+### Comparação com Aurelius/XData
+
+| Aurelius/XData | Go-Data ObjectManager |
+|----------------|----------------------|
+| `TObjectManager` | `ObjectManager` |
+| `Find<T>(id)` | `Find(entityName, id)` |
+| `Save(entity)` | `Save(entity)` |
+| `Update(entity)` | `Update(entity)` |
+| `Remove(entity)` | `Remove(entity)` |
+| `Merge(entity)` | `Merge(entity)` |
+| `Flush` | `Flush(entity)` / `FlushAll()` |
+| `BeginTransaction` | `BeginTransaction()` |
+| `CommitTransaction` | `CommitTransaction(tx)` |
+| `RollbackTransaction` | `RollbackTransaction(tx)` |
+| `IsCached(entity)` | `IsCached(name, id)` |
+| `IsAttached(entity)` | `IsAttached(entity)` |
+| `Evict(entity)` | `Evict(entity)` |
+| `ClearCache()` | `ClearCache()` |
+
+### Melhores Práticas
+
+1. **Use dentro de Eventos**: O ObjectManager é ideal para uso dentro de eventos
+2. **Habilite Cached Updates para Bulk**: Para muitas operações, use cached updates
+3. **Sempre use Transações**: Para operações críticas, envolva em transações
+4. **Aproveite o Cache**: O identity mapping evita queries duplicadas
+5. **Flush Explícito**: Para cached updates, não esqueça de chamar `FlushAll()`
+
+### Performance
+
+O ObjectManager oferece otimizações importantes:
+
+- **Identity Mapping**: Elimina queries duplicadas
+- **Batching**: Agrupa operações INSERT/UPDATE/DELETE
+- **Change Tracking**: Apenas persiste o que foi modificado
+- **Cache Local**: Reduz round-trips ao banco de dados
+
 ## 🎯 Service Operations
 
 O Go-Data implementa Service Operations similares ao XData, mas usando padrões idiomáticos do Go. O sistema oferece um `ServiceContext` otimizado que equivale funcionalmente ao `TXDataOperationContext` do XData.
@@ -3045,17 +4306,90 @@ Host: localhost:3000
 ```
 
 **Configuração do Batch:**
+
+O Go-Data oferece configuração flexível para batch requests através do `BatchConfig`:
+
 ```go
 // Usar configuração padrão (automática)
 server := odata.NewServer()
+// Batch habilitado automaticamente com valores padrão
 
-// Ou customizar
+// Ou customizar com BatchConfig
 config := &odata.BatchConfig{
-    MaxOperations:      100,          // Máximo de operações por batch
-    MaxChangesets:      10,           // Máximo de changesets
-    Timeout:            30 * time.Second,
-    EnableTransactions: true,         // Habilitar transações para changesets
+    // Limites de segurança
+    MaxOperations:      100,                // Máximo de operações por batch (padrão: 100)
+    MaxChangesets:      10,                 // Máximo de changesets (padrão: 10)
+    MaxOperationsPerChangeset: 50,          // Máximo de operações por changeset (padrão: 50)
+    
+    // Controle de tempo
+    Timeout:            30 * time.Second,   // Timeout para todo o batch (padrão: 30s)
+    OperationTimeout:   5 * time.Second,    // Timeout por operação individual (padrão: 5s)
+    
+    // Transações
+    EnableTransactions: true,               // Habilitar transações para changesets (padrão: true)
+    IsolationLevel:     sql.LevelSerializable, // Nível de isolamento (opcional)
+    
+    // Validação
+    ValidateContentID:  true,               // Validar Content-ID (padrão: true)
+    StrictMode:         false,              // Modo estrito (rejeita batch mal-formado)
+    
+    // Performance
+    ParallelReads:      true,               // Executar leituras em paralelo (padrão: false)
+    MaxParallelReads:   5,                  // Máximo de leituras paralelas (padrão: 5)
 }
+
+// Aplicar configuração no servidor
+server.SetBatchConfig(config)
+```
+
+**Opções de Configuração Detalhadas:**
+
+| Opção | Tipo | Padrão | Descrição |
+|-------|------|--------|-----------|
+| `MaxOperations` | int | 100 | Número máximo de operações no batch |
+| `MaxChangesets` | int | 10 | Número máximo de changesets no batch |
+| `MaxOperationsPerChangeset` | int | 50 | Operações máximas por changeset |
+| `Timeout` | Duration | 30s | Timeout para processar o batch completo |
+| `OperationTimeout` | Duration | 5s | Timeout para cada operação individual |
+| `EnableTransactions` | bool | true | Se changesets devem usar transações |
+| `IsolationLevel` | sql.IsolationLevel | - | Nível de isolamento das transações |
+| `ValidateContentID` | bool | true | Validar unicidade de Content-IDs |
+| `StrictMode` | bool | false | Rejeitar batch com formato incorreto |
+| `ParallelReads` | bool | false | Executar leituras em paralelo |
+| `MaxParallelReads` | int | 5 | Limite de leituras paralelas |
+
+**Configurações Predefinidas:**
+
+```go
+// Desenvolvimento (permissivo)
+devConfig := &odata.BatchConfig{
+    MaxOperations:      200,
+    MaxChangesets:      20,
+    Timeout:            60 * time.Second,
+    StrictMode:         false,
+    ParallelReads:      true,
+}
+
+// Produção (restritivo)
+prodConfig := &odata.BatchConfig{
+    MaxOperations:      50,
+    MaxChangesets:      5,
+    Timeout:            15 * time.Second,
+    StrictMode:         true,
+    EnableTransactions: true,
+    ValidateContentID:  true,
+}
+
+// Performance (otimizado)
+perfConfig := &odata.BatchConfig{
+    MaxOperations:      100,
+    Timeout:            30 * time.Second,
+    ParallelReads:      true,
+    MaxParallelReads:   10,
+    EnableTransactions: true,
+}
+
+server.SetBatchConfig(prodConfig)
 ```
 
 **Benefícios:**
@@ -3572,6 +4906,15 @@ Funcionalidades avançadas:
 - Mapeamento complexo
 - Relacionamentos N:N
 - Arquivo .env com configurações de produção
+
+### ⚙️ [Config Override](examples/config_override/)
+Demonstra configuração programática e sobrescrita de .env:
+- Carregamento automático do .env
+- Injeção automática de variáveis no `os.Getenv()`
+- Sobrescrita de configurações via código (prioridade sobre .env)
+- Uso de variáveis customizadas além das padrões
+- Métodos setter fluentes
+- Configuração condicional baseada em ambiente
 
 ## 📚 Referências
 [![Go Reference](https://pkg.go.dev/badge/github.com/fitlcarlos/go-data.svg)](https://pkg.go.dev/github.com/fitlcarlos/go-data)
