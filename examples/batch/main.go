@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
+	"github.com/fitlcarlos/go-data/odata"
 	_ "modernc.org/sqlite"
 )
 

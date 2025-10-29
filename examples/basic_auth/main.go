@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
+	"github.com/fitlcarlos/go-data/odata"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v3"
 	"github.com/joho/godotenv"

@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
+	"github.com/fitlcarlos/go-data/odata"
 	"github.com/gofiber/fiber/v3"
 )
 

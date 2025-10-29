@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
+	"github.com/fitlcarlos/go-data/odata"
 )
 
 // User representa uma entidade de usuário

@@ -5,8 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
-	_ "github.com/fitlcarlos/go-data/pkg/providers" // Importa providers para registrar factories
+	"github.com/fitlcarlos/go-data/odata"
 )
 
 // Exemplo de uso avançado do servidor HTTP embutido

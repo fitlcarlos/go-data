@@ -6,8 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
-	_ "github.com/fitlcarlos/go-data/pkg/providers" // Importa providers para registrar factories
+	"github.com/fitlcarlos/go-data/odata"
 	"github.com/gofiber/fiber/v3"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"

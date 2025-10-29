@@ -4,8 +4,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
-	_ "github.com/fitlcarlos/go-data/pkg/providers"
+	"github.com/fitlcarlos/go-data/odata"
 )
 
 // Product representa um produto
