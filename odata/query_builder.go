@@ -7,6 +7,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // NodeMap mapeia operadores OData para SQL
@@ -18,17 +20,25 @@ type PrepareMap map[string]string
 // NamedArgs gerencia argumentos nomeados para queries SQL usando sql.Named
 type NamedArgs struct {
 	args    []interface{}
+	pgxArgs pgx.NamedArgs // Para PostgreSQL/pgx: mantém um único map combinado
 	counter int
 	dialect string
+	usePgx  bool
 }
 
 // NewNamedArgs cria uma nova instância de NamedArgs
 func NewNamedArgs(dialect string) *NamedArgs {
-	return &NamedArgs{
+	usePgx := strings.ToLower(dialect) == "pgx" || strings.ToLower(dialect) == "postgresql" || strings.ToLower(dialect) == "postgres"
+	na := &NamedArgs{
 		args:    make([]interface{}, 0),
 		counter: 0,
 		dialect: strings.ToLower(dialect),
+		usePgx:  usePgx,
 	}
+	if usePgx {
+		na.pgxArgs = make(pgx.NamedArgs)
+	}
+	return na
 }
 
 // AddArg adiciona um argumento usando sql.Named e retorna o placeholder apropriado
@@ -37,14 +47,23 @@ func (na *NamedArgs) AddArg(value interface{}) string {
 
 	paramName := fmt.Sprintf("param%d", na.counter)
 
-	namedArg := sql.Named(paramName, value)
-	na.args = append(na.args, namedArg)
-
-	return ":" + paramName
+	if na.usePgx {
+		// Para pgx: adiciona ao map único ao invés de criar maps separados
+		na.pgxArgs[paramName] = value
+		return "@" + paramName
+	} else {
+		namedArg := sql.Named(paramName, value)
+		na.args = append(na.args, namedArg)
+		return ":" + paramName
+	}
 }
 
 // GetArgs retorna os argumentos como slice de interface{}
 func (na *NamedArgs) GetArgs() []interface{} {
+	if na.usePgx {
+		// Para pgx: retorna o map único combinado
+		return []interface{}{na.pgxArgs}
+	}
 	return na.args
 }
 
@@ -239,11 +258,46 @@ func (qb *QueryBuilder) buildPropertyExpression(node *ParseNode, metadata Entity
 
 // buildBinaryOperatorExpression constrói expressão para operador binário
 func (qb *QueryBuilder) buildBinaryOperatorExpression(ctx context.Context, node *ParseNode, metadata EntityMetadata) (string, []interface{}, error) {
-	if len(node.Children) != 2 {
-		return "", nil, fmt.Errorf("binary operator %s expects 2 children, got %d", node.Token.Value, len(node.Children))
+	operator := node.Token.Value
+
+	// Tratamento especial para operador IN que precisa de N valores
+	if strings.ToLower(operator) == "in" {
+		if len(node.Children) < 2 {
+			return "", nil, fmt.Errorf("IN operator needs at least 2 children (property + values), got %d", len(node.Children))
+		}
+
+		// O primeiro filho é a propriedade, os demais são os valores
+		propertyExpr, propertyArgs, err := qb.buildNodeExpression(ctx, node.Children[0], metadata)
+		if err != nil {
+			return "", nil, err
+		}
+
+		// Constrói lista de valores para IN
+		var valuesExpr []string
+		var allArgs []interface{}
+		for i := 1; i < len(node.Children); i++ {
+			valExpr, valArgs, err := qb.buildNodeExpression(ctx, node.Children[i], metadata)
+			if err != nil {
+				return "", nil, err
+			}
+			valuesExpr = append(valuesExpr, valExpr)
+			allArgs = append(allArgs, valArgs...)
+		}
+
+		// Combina valores com vírgula
+		valuesStr := strings.Join(valuesExpr, ", ")
+
+		// SQL: (property IN (value1, value2, ...))
+		expression := fmt.Sprintf("(%s IN (%s))", propertyExpr, valuesStr)
+
+		return expression, append(propertyArgs, allArgs...), nil
 	}
 
-	operator := node.Token.Value
+	// Operadores binários tradicionais
+	if len(node.Children) != 2 {
+		return "", nil, fmt.Errorf("binary operator %s expects 2 children, got %d", operator, len(node.Children))
+	}
+
 	template, exists := qb.nodeMap[operator]
 	if !exists {
 		return "", nil, fmt.Errorf("unsupported operator: %s", operator)
@@ -304,12 +358,46 @@ func (qb *QueryBuilder) buildBinaryOperatorExpression(ctx context.Context, node 
 
 // buildBinaryOperatorExpressionNamed constrói expressão para operador binário usando argumentos nomeados
 func (qb *QueryBuilder) buildBinaryOperatorExpressionNamed(ctx context.Context, node *ParseNode, metadata EntityMetadata, namedArgs *NamedArgs) (string, error) {
+	operator := node.Token.Value
 
+	// Tratamento especial para operador IN que precisa de N valores
+	if strings.ToLower(operator) == "in" {
+		if len(node.Children) < 2 {
+			return "", fmt.Errorf("IN operator needs at least 2 children (property + values), got %d", len(node.Children))
+		}
+
+		// O primeiro filho é a propriedade, os demais são os valores
+		propertyExpr, err := qb.buildNodeExpressionNamed(ctx, node.Children[0], metadata, namedArgs)
+		if err != nil {
+			return "", err
+		}
+
+		log.Printf("🔍 [IN-NAMED] Property expr: %s", propertyExpr)
+
+		// Constrói lista de valores para IN
+		var valuesExpr []string
+		for i := 1; i < len(node.Children); i++ {
+			valExpr, err := qb.buildNodeExpressionNamed(ctx, node.Children[i], metadata, namedArgs)
+			if err != nil {
+				return "", err
+			}
+			log.Printf("🔍 [IN-NAMED] Value[%d]: %s", i-1, valExpr)
+			valuesExpr = append(valuesExpr, valExpr)
+		}
+
+		// Combina valores com vírgula
+		valuesStr := strings.Join(valuesExpr, ", ")
+
+		// SQL: (property IN (value1, value2, ...))
+		expression := fmt.Sprintf("(%s IN (%s))", propertyExpr, valuesStr)
+
+		return expression, nil
+	}
+
+	// Operadores binários tradicionais
 	if len(node.Children) != 2 {
 		return "", fmt.Errorf("binary operator %s expects 2 children, got %d", node.Token.Value, len(node.Children))
 	}
-
-	operator := node.Token.Value
 
 	// Verifica se o nodeMap está inicializado
 	if qb.nodeMap == nil {

@@ -69,36 +69,72 @@ func (p *MultiTenantProviderPool) GetProvider(tenantID string) DatabaseProvider 
 	return p.defaultProvider
 }
 
-// createTenantProvider cria um provider específico para um tenant
+// createTenantProvider cria um provider específico para um tenant (singleton por tenant)
 func (p *MultiTenantProviderPool) createTenantProvider(config *TenantConfig) (DatabaseProvider, error) {
-	if factory, exists := providerRegistry[config.DBDriver]; exists {
-		provider := factory()
-
-		// Configura a conexão específica do tenant
-		connectionString := config.BuildConnectionString()
-
-		// Tenta configurar a conexão usando interface específica
-		if configurableProvider, ok := provider.(interface {
-			ConfigureConnection(connectionString string, maxOpen, maxIdle int, maxLifetime interface{}) error
-		}); ok {
-			err := configurableProvider.ConfigureConnection(
-				connectionString,
-				config.DBMaxOpenConns,
-				config.DBMaxIdleConns,
-				config.DBConnMaxLifetime,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("erro ao configurar conexão para tenant %s: %w", config.TenantID, err)
-			}
-		} else {
-			// Se não suporta configuração dinâmica, tenta métodos alternativos
-			p.logger.Printf("⚠️ Provider %s não suporta configuração dinâmica para tenant %s", config.DBDriver, config.TenantID)
-		}
-
-		return provider, nil
+	// Cria chave única para este tenant
+	cacheKey := fmt.Sprintf("%s:%s@%s:%s/%s", config.DBDriver, config.DBUser, config.DBHost, config.DBPort, config.DBName)
+	
+	// Verifica se já existe no cache global
+	providerCacheMu.RLock()
+	if cached, exists := providerCache[cacheKey]; exists {
+		providerCacheMu.RUnlock()
+		p.logger.Printf("📦 Reusando provider cacheado para tenant %s", config.TenantID)
+		return cached, nil
+	}
+	providerCacheMu.RUnlock()
+	
+	// Cria novo provider
+	providerCacheMu.Lock()
+	defer providerCacheMu.Unlock()
+	
+	// Double-check
+	if cached, exists := providerCache[cacheKey]; exists {
+		return cached, nil
+	}
+	
+	var provider DatabaseProvider
+	
+	// Cria provider baseado no driver
+	switch config.DBDriver {
+	case "postgresql", "postgres", "pgx":
+		provider = NewPostgreSQLProvider()
+	case "mysql":
+		provider = NewMySQLProvider()
+	case "oracle":
+		provider = NewOracleProvider()
+	default:
+		return nil, fmt.Errorf("tipo de provider não suportado: %s", config.DBDriver)
 	}
 
-	return nil, fmt.Errorf("provider não registrado para tipo: %s", config.DBDriver)
+	if provider == nil {
+		return nil, fmt.Errorf("falha ao criar provider para tipo: %s", config.DBDriver)
+	}
+
+	// Configura a conexão específica do tenant
+	connectionString := config.BuildConnectionString()
+
+	// Tenta configurar a conexão usando interface específica
+	if configurableProvider, ok := provider.(interface {
+		ConfigureConnection(connectionString string, maxOpen, maxIdle int, maxLifetime interface{}) error
+	}); ok {
+		err := configurableProvider.ConfigureConnection(
+			connectionString,
+			config.DBMaxOpenConns,
+			config.DBMaxIdleConns,
+			config.DBConnMaxLifetime,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("erro ao configurar conexão para tenant %s: %w", config.TenantID, err)
+		}
+	} else {
+		// Se não suporta configuração dinâmica, tenta métodos alternativos
+		p.logger.Printf("⚠️ Provider %s não suporta configuração dinâmica para tenant %s", config.DBDriver, config.TenantID)
+	}
+
+	// Adiciona ao cache global
+	providerCache[cacheKey] = provider
+	
+	return provider, nil
 }
 
 // AddTenant adiciona um novo tenant dinamicamente

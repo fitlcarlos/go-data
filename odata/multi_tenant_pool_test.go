@@ -319,27 +319,3 @@ func TestMultiTenantProviderPool_EdgeCases(t *testing.T) {
 		_ = provider
 	})
 }
-
-// mockDatabaseProvider for testing
-type mockMultiTenantDatabaseProvider struct {
-	connected bool
-	closed    bool
-}
-
-func (m *mockMultiTenantDatabaseProvider) Connect(connectionString string) error {
-	m.connected = true
-	return nil
-}
-
-func (m *mockMultiTenantDatabaseProvider) Close() error {
-	m.closed = true
-	return nil
-}
-
-func (m *mockMultiTenantDatabaseProvider) GetConnection() interface{} {
-	return nil
-}
-
-func (m *mockMultiTenantDatabaseProvider) GetDriverName() string {
-	return "mock"
-}

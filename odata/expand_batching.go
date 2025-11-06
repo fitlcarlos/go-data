@@ -63,7 +63,7 @@ func (s *BaseEntityService) expandWithBatching(
 		return nil, fmt.Errorf("failed to get related entity metadata: %w", err)
 	}
 
-	// 3. Construir filtro: ReferencedProperty IN (parentIDs)
+	// 3. Construir filtro usando IN operador
 	filterParts := make([]string, len(parentIDs))
 	for i, id := range parentIDs {
 		// Formatar valor baseado no tipo
@@ -192,4 +192,3 @@ func (s *BaseEntityService) expandWithBatching(
 
 	return entities, nil
 }
-

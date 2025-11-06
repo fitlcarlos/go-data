@@ -126,30 +126,16 @@ func (s *Server) CheckEntityReadOnly(entityName string, method string) fiber.Han
 // DatabaseMiddleware middleware que adiciona conexão de banco no contexto
 func (s *Server) DatabaseMiddleware() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		// Obter provider (já existe a lógica)
-		provider := s.getCurrentProvider(c)
-		if provider != nil {
-			// Obter conexão do pool
-			if conn := provider.GetConnection(); conn != nil {
-				// Armazenar conexão no contexto
-				c.Locals("db_conn", conn)
-
-				// Garantir fechamento da conexão ao final da requisição
-				defer func() {
-					// A conexão será fechada automaticamente pelo pool
-					// quando não estiver mais em uso
-				}()
-			}
-		}
-
+		// Middleware apenas para garantir que o provider está disponível
+		// A conexão não é armazenada no contexto para evitar garbage collection
+		s.getCurrentProvider(c)
 		return c.Next()
 	}
 }
 
 // GetDBFromContext obtém a conexão de banco de dados do contexto
+// DEPRECADO: Use GetConnection() do context_helpers.go que retorna o pool global
 func GetDBFromContext(c fiber.Ctx) *sql.DB {
-	if conn, ok := c.Locals("db_conn").(*sql.DB); ok {
-		return conn
-	}
-	return nil
+	// Retorna o pool global diretamente
+	return GetConnection(c)
 }

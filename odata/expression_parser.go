@@ -136,8 +136,14 @@ func (p *ExpressionParser) InfixToPostfix(ctx context.Context, tokens []*Token) 
 
 		case int(FilterTokenComma):
 			// Vírgula: pop até encontrar parêntese aberto
+			// EXCEÇÃO: não fazer pop do operador "in" - ele deve permanecer na stack
 			for len(operatorStack) > 0 && operatorStack[len(operatorStack)-1].Type != int(FilterTokenOpenParen) {
-				output = append(output, operatorStack[len(operatorStack)-1])
+				top := operatorStack[len(operatorStack)-1]
+				// Se o topo é "in", não fazer pop - apenas pular
+				if top.Type == int(FilterTokenComparison) && strings.ToLower(top.Value) == "in" {
+					break
+				}
+				output = append(output, top)
 				operatorStack = operatorStack[:len(operatorStack)-1]
 			}
 
@@ -266,7 +272,55 @@ func (p *ExpressionParser) PostfixToTree(ctx context.Context, postfix []*Token) 
 
 			stack = append(stack, node)
 
-		case int(FilterTokenLogical), int(FilterTokenComparison), int(FilterTokenArithmetic):
+		case int(FilterTokenComparison):
+			if strings.ToLower(token.Value) == "in" {
+				// Operador IN: precisa de 1 propriedade + múltiplos valores
+				// EX: id_user in (1, 2, 3, 4, 5) -> postfix: id_user 1 2 3 4 5 in
+				// Stack esperado ao chegar no IN: [1, 2, 3, 4, 5, id_user]
+				// Último item da pilha = propriedade
+				// Os anteriores = valores em ordem
+				if len(stack) < 2 {
+					return nil, fmt.Errorf("insufficient operands for operator %s", token.Value)
+				}
+
+				// A propriedade está no índice 0, os valores nos índices 1 até n
+				property := stack[0]
+				values := stack[1:] // Todos os valores
+
+				// Configurar parent
+				property.Parent = node
+				for i := range values {
+					values[i].Parent = node
+				}
+
+				// Resultado: [property, val1, val2, val3, val4, val5]
+				node.Children = append([]*ParseNode{property}, values...)
+
+				// Limpar stack - remover todos os elementos que foram usados
+				stack = []*ParseNode{}
+
+				// Adiciona o nó construído de volta ao stack
+				stack = append(stack, node)
+			} else {
+				// Outros operadores de comparação são binários normais
+				if len(stack) < 2 {
+					return nil, fmt.Errorf("insufficient operands for operator %s", token.Value)
+				}
+
+				// Pop dois operandos
+				right := stack[len(stack)-1]
+				left := stack[len(stack)-2]
+				stack = stack[:len(stack)-2]
+
+				// Configura filhos
+				left.Parent = node
+				right.Parent = node
+				node.Children = []*ParseNode{left, right}
+
+				stack = append(stack, node)
+			}
+
+		case int(FilterTokenLogical), int(FilterTokenArithmetic):
 			// Operadores binários
 			if len(stack) < 2 {
 				return nil, fmt.Errorf("insufficient operands for operator %s", token.Value)

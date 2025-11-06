@@ -1,4 +1,4 @@
-package providers
+package odata
 
 import (
 	"context"
@@ -9,16 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
 	_ "github.com/sijms/go-ora/v2"
 )
-
-// Registrar factory do Oracle no registry
-func init() {
-	odata.RegisterProvider("oracle", func() odata.DatabaseProvider {
-		return NewOracleProvider()
-	})
-}
 
 // OracleProvider implementa o DatabaseProvider para Oracle
 type OracleProvider struct {
@@ -31,7 +23,8 @@ func NewOracleProvider(connection ...*sql.DB) *OracleProvider {
 
 	// Se não recebeu conexão, tenta carregar do .env
 	if len(connection) == 0 || connection[0] == nil {
-		config, err := odata.LoadEnvOrDefault()
+		log.Printf("🔍 [PROVIDER] Nenhuma conexão passada, carregando do .env...")
+		config, err := LoadEnvOrDefault()
 		if err != nil {
 			log.Printf("Aviso: Não foi possível carregar configurações do .env: %v", err)
 			return &OracleProvider{
@@ -56,21 +49,29 @@ func NewOracleProvider(connection ...*sql.DB) *OracleProvider {
 			// Configura pool de conexões
 			db.SetMaxOpenConns(config.DBMaxOpenConns)
 			db.SetMaxIdleConns(config.DBMaxIdleConns)
-			db.SetConnMaxLifetime(config.DBConnMaxLifetime)
 
-			// Testa conexão
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+			// Se DBConnMaxLifetime for 0, usa 5 minutos como padrão para evitar conexões expiradas imediatamente
+			lifetime := config.DBConnMaxLifetime
+			if lifetime == 0 {
+				lifetime = 5 * time.Minute
+			}
+			db.SetConnMaxLifetime(lifetime)
 
-			if err := db.PingContext(ctx); err != nil {
-				log.Printf("Erro ao testar conexão Oracle: %v", err)
+			// Se DBConnMaxIdleTime for 0, usa 5 minutos como padrão
+			idleTime := config.DBConnMaxIdleTime
+			if idleTime == 0 {
+				idleTime = 5 * time.Minute
+			}
+			db.SetConnMaxIdleTime(idleTime)
+
+			// Testa conexão (sem contexto com timeout para não cancelar a conexão)
+			if err := db.Ping(); err != nil {
+				log.Printf("❌ [BANCO DE DADOS] Falha ao conectar ao Oracle: %v", err)
 				db.Close()
 				return &OracleProvider{
 					BaseProvider: NewBaseProvider(nil, "oracle"),
 				}
 			}
-
-			log.Printf("✅ Conexão Oracle estabelecida usando configurações do .env")
 		}
 	} else {
 		db = connection[0]
@@ -84,6 +85,8 @@ func NewOracleProvider(connection ...*sql.DB) *OracleProvider {
 	if db != nil {
 		provider.InitQueryBuilder()
 		provider.InitParsers()
+	} else {
+		log.Printf("⚠️  [BANCO DE DADOS] Oracle Provider criado SEM conexão válida - Configure DB_USER e DB_PASSWORD no .env")
 	}
 
 	return provider
@@ -127,7 +130,7 @@ func (p *OracleProvider) Connect(connectionString string) error {
 }
 
 // BuildSelectQueryOptimized constrói query SELECT otimizada para Oracle com proteção contra timeouts
-func (p *OracleProvider) BuildSelectQueryOptimized(ctx context.Context, entity odata.EntityMetadata, options odata.QueryOptions) (string, []interface{}, error) {
+func (p *OracleProvider) BuildSelectQueryOptimized(ctx context.Context, entity EntityMetadata, options QueryOptions) (string, []interface{}, error) {
 	// Verifica se o contexto já foi cancelado antes de começar
 	select {
 	case <-ctx.Done():
@@ -140,9 +143,9 @@ func (p *OracleProvider) BuildSelectQueryOptimized(ctx context.Context, entity o
 }
 
 // BuildSelectQuery constrói uma query SELECT específica para Oracle
-func (p *OracleProvider) BuildSelectQuery(entity odata.EntityMetadata, options odata.QueryOptions) (string, []interface{}, error) {
+func (p *OracleProvider) BuildSelectQuery(entity EntityMetadata, options QueryOptions) (string, []interface{}, error) {
 	// SELECT clause
-	selectFields := odata.GetSelectedProperties(options.Select)
+	selectFields := GetSelectedProperties(options.Select)
 	selectClause, err := p.BuildSelectClause(selectFields, entity)
 	if err != nil {
 		return "", nil, err
@@ -183,8 +186,8 @@ func (p *OracleProvider) BuildSelectQuery(entity odata.EntityMetadata, options o
 	}
 
 	// Aplicar TOP/SKIP usando ROWNUM (Oracle 11g compatible)
-	topValue := odata.GetTopValue(options.Top)
-	skipValue := odata.GetSkipValue(options.Skip)
+	topValue := GetTopValue(options.Top)
+	skipValue := GetSkipValue(options.Skip)
 
 	if topValue > 0 || skipValue > 0 {
 		if skipValue > 0 {
@@ -212,7 +215,7 @@ func (p *OracleProvider) BuildSelectQuery(entity odata.EntityMetadata, options o
 }
 
 // buildSanitizedWhereClause constrói cláusula WHERE com sanitização para Oracle
-func (p *OracleProvider) buildSanitizedWhereClause(ctx context.Context, tree *odata.ParseNode, entity odata.EntityMetadata) (string, []interface{}, error) {
+func (p *OracleProvider) buildSanitizedWhereClause(ctx context.Context, tree *ParseNode, entity EntityMetadata) (string, []interface{}, error) {
 	// Verifica timeout antes de processar
 	select {
 	case <-ctx.Done():
@@ -233,7 +236,7 @@ func (p *OracleProvider) buildSanitizedWhereClause(ctx context.Context, tree *od
 }
 
 // buildSanitizedWhereClauseNamed constrói cláusula WHERE com sanitização para Oracle usando argumentos nomeados
-func (p *OracleProvider) buildSanitizedWhereClauseNamed(ctx context.Context, tree *odata.ParseNode, entity odata.EntityMetadata) (string, []interface{}, error) {
+func (p *OracleProvider) buildSanitizedWhereClauseNamed(ctx context.Context, tree *ParseNode, entity EntityMetadata) (string, []interface{}, error) {
 	// Verifica timeout antes de processar
 	select {
 	case <-ctx.Done():
@@ -241,7 +244,7 @@ func (p *OracleProvider) buildSanitizedWhereClauseNamed(ctx context.Context, tre
 	default:
 	}
 
-	namedArgs := odata.NewNamedArgs("oracle")
+	namedArgs := NewNamedArgs("oracle")
 	qb := p.GetQueryBuilder()
 	whereClause, err := qb.BuildWhereClauseNamed(ctx, tree, entity, namedArgs)
 	if err != nil {
@@ -288,7 +291,7 @@ func (p *OracleProvider) sanitizeOracleQuery(query string) string {
 }
 
 // BuildInsertQuery constrói uma query INSERT específica para Oracle
-func (p *OracleProvider) BuildInsertQuery(entity odata.EntityMetadata, data map[string]interface{}) (string, []interface{}, error) {
+func (p *OracleProvider) BuildInsertQuery(entity EntityMetadata, data map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
@@ -296,11 +299,11 @@ func (p *OracleProvider) BuildInsertQuery(entity odata.EntityMetadata, data map[
 
 	var columns []string
 	var placeholders []string
-	namedArgs := odata.NewNamedArgs("oracle")
+	namedArgs := NewNamedArgs("oracle")
 
 	for key, value := range data {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -350,19 +353,19 @@ func (p *OracleProvider) BuildInsertQuery(entity odata.EntityMetadata, data map[
 }
 
 // BuildUpdateQuery constrói uma query UPDATE específica para Oracle
-func (p *OracleProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[string]interface{}, keyValues map[string]interface{}) (string, []interface{}, error) {
+func (p *OracleProvider) BuildUpdateQuery(entity EntityMetadata, data map[string]interface{}, keyValues map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
 	}
 
 	var setClauses []string
-	namedArgs := odata.NewNamedArgs("oracle")
+	namedArgs := NewNamedArgs("oracle")
 
 	// Constrói as cláusulas SET
 	for key, value := range data {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -401,7 +404,7 @@ func (p *OracleProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[
 	var whereClauses []string
 	for key, value := range keyValues {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -442,19 +445,19 @@ func (p *OracleProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[
 }
 
 // BuildDeleteQuery constrói uma query DELETE específica para Oracle
-func (p *OracleProvider) BuildDeleteQuery(entity odata.EntityMetadata, keyValues map[string]interface{}) (string, []interface{}, error) {
+func (p *OracleProvider) BuildDeleteQuery(entity EntityMetadata, keyValues map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
 	}
 
 	var whereClauses []string
-	namedArgs := odata.NewNamedArgs("oracle")
+	namedArgs := NewNamedArgs("oracle")
 
 	// Constrói a cláusula WHERE baseada nas chaves
 	for key, value := range keyValues {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -593,14 +596,14 @@ func (p *OracleProvider) FormatDateTime(t time.Time) string {
 }
 
 // BuildWhereClause sobrescreve o método base para usar placeholders do Oracle
-func (p *OracleProvider) BuildWhereClause(filter string, metadata odata.EntityMetadata) (string, []interface{}, error) {
+func (p *OracleProvider) BuildWhereClause(filter string, metadata EntityMetadata) (string, []interface{}, error) {
 	log.Printf("🔍 DEBUG Oracle BuildWhereClause called with filter: %s", filter)
 
 	if filter == "" {
 		return "", nil, nil
 	}
 
-	parser := odata.NewODataParser()
+	parser := NewODataParser()
 	expressions, err := parser.ParseFilter(filter)
 	if err != nil {
 		log.Printf("❌ DEBUG Filter parsing error: %v", err)
@@ -616,7 +619,7 @@ func (p *OracleProvider) BuildWhereClause(filter string, metadata odata.EntityMe
 		log.Printf("📝 DEBUG Expression %d: Property=%s, Operator=%s, Value=%v", i, expr.Property, expr.Operator, expr.Value)
 
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range metadata.Properties {
 			if p.Name == expr.Property {
 				prop = &p
@@ -650,7 +653,7 @@ func (p *OracleProvider) BuildWhereClause(filter string, metadata odata.EntityMe
 }
 
 // buildOracleCondition constrói uma condição individual do WHERE usando placeholders Oracle numerados
-func (p *OracleProvider) buildOracleCondition(expr odata.FilterExpression, prop odata.PropertyMetadata, paramIndex int) (string, interface{}, error) {
+func (p *OracleProvider) buildOracleCondition(expr FilterExpression, prop PropertyMetadata, paramIndex int) (string, interface{}, error) {
 	columnName := prop.ColumnName
 	if columnName == "" {
 		columnName = prop.Name
@@ -660,33 +663,33 @@ func (p *OracleProvider) buildOracleCondition(expr odata.FilterExpression, prop 
 	placeholder := "?"
 
 	switch expr.Operator {
-	case odata.FilterEq:
+	case FilterEq:
 		return fmt.Sprintf("%s = %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterNe:
+	case FilterNe:
 		return fmt.Sprintf("%s != %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterGt:
+	case FilterGt:
 		return fmt.Sprintf("%s > %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterGe:
+	case FilterGe:
 		return fmt.Sprintf("%s >= %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterLt:
+	case FilterLt:
 		return fmt.Sprintf("%s < %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterLe:
+	case FilterLe:
 		return fmt.Sprintf("%s <= %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterContains:
+	case FilterContains:
 		return fmt.Sprintf("UPPER(%s) LIKE UPPER(%s)", columnName, placeholder), fmt.Sprintf("%%%s%%", expr.Value), nil
-	case odata.FilterStartsWith:
+	case FilterStartsWith:
 		return fmt.Sprintf("UPPER(%s) LIKE UPPER(%s)", columnName, placeholder), fmt.Sprintf("%s%%", expr.Value), nil
-	case odata.FilterEndsWith:
+	case FilterEndsWith:
 		return fmt.Sprintf("UPPER(%s) LIKE UPPER(%s)", columnName, placeholder), fmt.Sprintf("%%%s", expr.Value), nil
 	// Funções de string - delegam para o BaseProvider
-	case odata.FilterLength, odata.FilterToLower, odata.FilterToUpper, odata.FilterTrim,
-		odata.FilterIndexOf, odata.FilterConcat, odata.FilterSubstring:
+	case FilterLength, FilterToLower, FilterToUpper, FilterTrim,
+		FilterIndexOf, FilterConcat, FilterSubstring:
 		return p.buildOracleStringFunctionCondition(expr, columnName, paramIndex)
 	// Operadores matemáticos - tratamento específico para Oracle
-	case odata.FilterAdd, odata.FilterSub, odata.FilterMul, odata.FilterDiv, odata.FilterMod:
+	case FilterAdd, FilterSub, FilterMul, FilterDiv, FilterMod:
 		return p.buildOracleMathFunctionCondition(expr, columnName, paramIndex)
 	// Funções de data/hora - tratamento específico para Oracle
-	case odata.FilterYear, odata.FilterMonth, odata.FilterDay, odata.FilterHour, odata.FilterMinute, odata.FilterSecond, odata.FilterNow:
+	case FilterYear, FilterMonth, FilterDay, FilterHour, FilterMinute, FilterSecond, FilterNow:
 		return p.buildOracleDateTimeFunctionCondition(expr, columnName, paramIndex)
 	default:
 		return "", nil, fmt.Errorf("unsupported operator: %s", expr.Operator)
@@ -694,22 +697,22 @@ func (p *OracleProvider) buildOracleCondition(expr odata.FilterExpression, prop 
 }
 
 // buildOracleStringFunctionCondition constrói condições para funções de string no Oracle
-func (p *OracleProvider) buildOracleStringFunctionCondition(expr odata.FilterExpression, columnName string, paramIndex int) (string, interface{}, error) {
+func (p *OracleProvider) buildOracleStringFunctionCondition(expr FilterExpression, columnName string, paramIndex int) (string, interface{}, error) {
 	placeholder := "?"
 
 	switch expr.Operator {
-	case odata.FilterLength:
+	case FilterLength:
 		return fmt.Sprintf("LENGTH(%s) = %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterToLower:
+	case FilterToLower:
 		return fmt.Sprintf("LOWER(%s) = %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterToUpper:
+	case FilterToUpper:
 		return fmt.Sprintf("UPPER(%s) = %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterTrim:
+	case FilterTrim:
 		return fmt.Sprintf("TRIM(%s) = %s", columnName, placeholder), expr.Value, nil
-	case odata.FilterIndexOf:
+	case FilterIndexOf:
 		// Oracle usa INSTR() que retorna posição base 1, subtraímos 1 para base 0
 		return fmt.Sprintf("INSTR(%s, %s) - 1", columnName, placeholder), expr.Value, nil
-	case odata.FilterConcat:
+	case FilterConcat:
 		// Oracle usa || para concatenação
 		if len(expr.Arguments) == 0 {
 			return "", nil, fmt.Errorf("concat function requires arguments")
@@ -720,7 +723,7 @@ func (p *OracleProvider) buildOracleStringFunctionCondition(expr odata.FilterExp
 		}
 		concatExpr += " = " + placeholder
 		return concatExpr, expr.Arguments, nil
-	case odata.FilterSubstring:
+	case FilterSubstring:
 		// Oracle usa SUBSTR()
 		if len(expr.Arguments) == 1 {
 			return fmt.Sprintf("SUBSTR(%s, %s) = %s", columnName, placeholder, placeholder), expr.Arguments[0], nil
@@ -734,7 +737,7 @@ func (p *OracleProvider) buildOracleStringFunctionCondition(expr odata.FilterExp
 }
 
 // buildOracleMathFunctionCondition constrói condições para operadores matemáticos no Oracle
-func (p *OracleProvider) buildOracleMathFunctionCondition(expr odata.FilterExpression, columnName string, paramIndex int) (string, interface{}, error) {
+func (p *OracleProvider) buildOracleMathFunctionCondition(expr FilterExpression, columnName string, paramIndex int) (string, interface{}, error) {
 	if len(expr.Arguments) != 1 {
 		return "", nil, fmt.Errorf("math function %s requires exactly 1 argument", expr.Operator)
 	}
@@ -749,15 +752,15 @@ func (p *OracleProvider) buildOracleMathFunctionCondition(expr odata.FilterExpre
 	// Oracle tem sintaxe específica para alguns operadores
 	var mathExpression string
 	switch expr.Operator {
-	case odata.FilterAdd:
+	case FilterAdd:
 		mathExpression = fmt.Sprintf("(%s + %s) = %s", columnName, placeholder1, placeholder2)
-	case odata.FilterSub:
+	case FilterSub:
 		mathExpression = fmt.Sprintf("(%s - %s) = %s", columnName, placeholder1, placeholder2)
-	case odata.FilterMul:
+	case FilterMul:
 		mathExpression = fmt.Sprintf("(%s * %s) = %s", columnName, placeholder1, placeholder2)
-	case odata.FilterDiv:
+	case FilterDiv:
 		mathExpression = fmt.Sprintf("(%s / %s) = %s", columnName, placeholder1, placeholder2)
-	case odata.FilterMod:
+	case FilterMod:
 		// Oracle usa a função MOD() em vez do operador %
 		mathExpression = fmt.Sprintf("MOD(%s, %s) = %s", columnName, placeholder1, placeholder2)
 	default:
@@ -770,39 +773,39 @@ func (p *OracleProvider) buildOracleMathFunctionCondition(expr odata.FilterExpre
 }
 
 // buildOracleDateTimeFunctionCondition constrói condições para funções de data/hora no Oracle
-func (p *OracleProvider) buildOracleDateTimeFunctionCondition(expr odata.FilterExpression, columnName string, paramIndex int) (string, interface{}, error) {
-	if expr.Value == nil && expr.Operator != odata.FilterNow {
+func (p *OracleProvider) buildOracleDateTimeFunctionCondition(expr FilterExpression, columnName string, paramIndex int) (string, interface{}, error) {
+	if expr.Value == nil && expr.Operator != FilterNow {
 		return "", nil, fmt.Errorf("datetime function %s requires a value to compare", expr.Operator)
 	}
 
 	placeholder := "?"
 
 	switch expr.Operator {
-	case odata.FilterYear:
+	case FilterYear:
 		// Oracle usa EXTRACT(YEAR FROM date_column)
 		return fmt.Sprintf("EXTRACT(YEAR FROM %s) = %s", columnName, placeholder), expr.Value, nil
 
-	case odata.FilterMonth:
+	case FilterMonth:
 		// Oracle usa EXTRACT(MONTH FROM date_column)
 		return fmt.Sprintf("EXTRACT(MONTH FROM %s) = %s", columnName, placeholder), expr.Value, nil
 
-	case odata.FilterDay:
+	case FilterDay:
 		// Oracle usa EXTRACT(DAY FROM date_column)
 		return fmt.Sprintf("EXTRACT(DAY FROM %s) = %s", columnName, placeholder), expr.Value, nil
 
-	case odata.FilterHour:
+	case FilterHour:
 		// Oracle usa EXTRACT(HOUR FROM timestamp_column)
 		return fmt.Sprintf("EXTRACT(HOUR FROM %s) = %s", columnName, placeholder), expr.Value, nil
 
-	case odata.FilterMinute:
+	case FilterMinute:
 		// Oracle usa EXTRACT(MINUTE FROM timestamp_column)
 		return fmt.Sprintf("EXTRACT(MINUTE FROM %s) = %s", columnName, placeholder), expr.Value, nil
 
-	case odata.FilterSecond:
+	case FilterSecond:
 		// Oracle usa EXTRACT(SECOND FROM timestamp_column)
 		return fmt.Sprintf("EXTRACT(SECOND FROM %s) = %s", columnName, placeholder), expr.Value, nil
 
-	case odata.FilterNow:
+	case FilterNow:
 		// Oracle usa SYSDATE para data/hora atual
 		return fmt.Sprintf("SYSDATE = %s", placeholder), expr.Value, nil
 

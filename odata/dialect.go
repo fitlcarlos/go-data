@@ -1,6 +1,9 @@
 package odata
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // SQLDialect define a interface para dialetos SQL específicos de cada provider
 type SQLDialect interface {
@@ -52,10 +55,11 @@ type SQLDialect interface {
 
 // GetDialect retorna a implementação de dialect apropriada
 func GetDialect(name string) SQLDialect {
+	name = strings.ToLower(name)
 	switch name {
 	case "mysql":
 		return &MySQLDialect{}
-	case "postgresql":
+	case "postgresql", "postgres", "pgx":
 		return &PostgreSQLDialect{}
 	case "oracle":
 		return &OracleDialect{}

@@ -33,7 +33,6 @@ type TxManager struct {
 	tx         *sql.Tx
 	manager    *ObjectManager
 	operations []BatchOperation
-	mu         sync.RWMutex
 }
 
 // ObjectManager implementa funcionalidades ORM similares ao TObjectManager do Aurelius
@@ -434,6 +433,9 @@ func (om *ObjectManager) GetChangedObjects() []any {
 // BeginTransaction inicia uma nova transação
 func (om *ObjectManager) BeginTransaction() (*TxManager, error) {
 	conn := om.GetConnection()
+	if conn == nil {
+		return nil, fmt.Errorf("database connection is nil")
+	}
 	tx, err := conn.BeginTx(om.context, nil)
 	if err != nil {
 		return nil, fmt.Errorf("erro ao iniciar transação: %w", err)

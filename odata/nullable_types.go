@@ -1,4 +1,4 @@
-package nullable
+package odata
 
 import (
 	"database/sql/driver"

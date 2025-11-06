@@ -54,6 +54,9 @@ type ServerConfig struct {
 	// Configurações de graceful shutdown
 	ShutdownTimeout time.Duration
 
+	// Configurações de banco de dados
+	DBLogSQL bool // Habilita/desabilita logs de queries SQL
+
 	// Configurações de prefixo
 	RoutePrefix string
 

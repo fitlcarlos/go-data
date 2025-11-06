@@ -1,24 +1,14 @@
-package providers
+package odata
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
-
 	_ "github.com/go-sql-driver/mysql"
 )
-
-// Registrar factory do MySQL no registry
-func init() {
-	odata.RegisterProvider("mysql", func() odata.DatabaseProvider {
-		return NewMySQLProvider()
-	})
-}
 
 // MySQLProvider implementa o provider para MySQL
 type MySQLProvider struct {
@@ -31,7 +21,8 @@ func NewMySQLProvider(connection ...*sql.DB) *MySQLProvider {
 
 	// Se não recebeu conexão, tenta carregar do .env
 	if len(connection) == 0 || connection[0] == nil {
-		config, err := odata.LoadEnvOrDefault()
+		log.Printf("🔍 [PROVIDER] Nenhuma conexão passada, carregando do .env...")
+		config, err := LoadEnvOrDefault()
 		if err != nil {
 			log.Printf("Aviso: Não foi possível carregar configurações do .env: %v", err)
 			return &MySQLProvider{
@@ -60,14 +51,24 @@ func NewMySQLProvider(connection ...*sql.DB) *MySQLProvider {
 			// Configura pool de conexões
 			db.SetMaxOpenConns(config.DBMaxOpenConns)
 			db.SetMaxIdleConns(config.DBMaxIdleConns)
-			db.SetConnMaxLifetime(config.DBConnMaxLifetime)
 
-			// Testa conexão
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+			// Se DBConnMaxLifetime for 0, usa 5 minutos como padrão para evitar conexões expiradas imediatamente
+			lifetime := config.DBConnMaxLifetime
+			if lifetime == 0 {
+				lifetime = 5 * time.Minute
+			}
+			db.SetConnMaxLifetime(lifetime)
 
-			if err := db.PingContext(ctx); err != nil {
-				log.Printf("Erro ao testar conexão MySQL: %v", err)
+			// Se DBConnMaxIdleTime for 0, usa 5 minutos como padrão
+			idleTime := config.DBConnMaxIdleTime
+			if idleTime == 0 {
+				idleTime = 5 * time.Minute
+			}
+			db.SetConnMaxIdleTime(idleTime)
+
+			// Testa conexão (sem contexto com timeout para não cancelar a conexão)
+			if err := db.Ping(); err != nil {
+				log.Printf("❌ [BANCO DE DADOS] Falha ao conectar ao MySQL: %v", err)
 				db.Close()
 				return &MySQLProvider{
 					BaseProvider: BaseProvider{
@@ -75,8 +76,6 @@ func NewMySQLProvider(connection ...*sql.DB) *MySQLProvider {
 					},
 				}
 			}
-
-			log.Printf("✅ Conexão MySQL estabelecida usando configurações do .env")
 		}
 	} else {
 		db = connection[0]
@@ -93,6 +92,8 @@ func NewMySQLProvider(connection ...*sql.DB) *MySQLProvider {
 	if db != nil {
 		provider.InitQueryBuilder()
 		provider.InitParsers()
+	} else {
+		log.Printf("⚠️  [BANCO DE DADOS] MySQL Provider criado SEM conexão válida - Configure DB_USER e DB_PASSWORD no .env")
 	}
 
 	return provider
@@ -115,9 +116,9 @@ func (p *MySQLProvider) Connect(connectionString string) error {
 }
 
 // BuildSelectQuery constrói uma query SELECT específica para MySQL
-func (p *MySQLProvider) BuildSelectQuery(entity odata.EntityMetadata, options odata.QueryOptions) (string, []interface{}, error) {
+func (p *MySQLProvider) BuildSelectQuery(entity EntityMetadata, options QueryOptions) (string, []interface{}, error) {
 	// SELECT clause
-	selectFields := odata.GetSelectedProperties(options.Select)
+	selectFields := GetSelectedProperties(options.Select)
 	selectClause, err := p.BuildSelectClause(selectFields, entity)
 	if err != nil {
 		return "", nil, err
@@ -156,8 +157,8 @@ func (p *MySQLProvider) BuildSelectQuery(entity odata.EntityMetadata, options od
 	}
 
 	// LIMIT e OFFSET (MySQL style)
-	topValue := odata.GetTopValue(options.Top)
-	skipValue := odata.GetSkipValue(options.Skip)
+	topValue := GetTopValue(options.Top)
+	skipValue := GetSkipValue(options.Skip)
 	if topValue > 0 && skipValue > 0 {
 		query += fmt.Sprintf(" LIMIT %d OFFSET %d", topValue, skipValue)
 	} else if topValue > 0 {
@@ -170,7 +171,7 @@ func (p *MySQLProvider) BuildSelectQuery(entity odata.EntityMetadata, options od
 }
 
 // BuildInsertQuery constrói uma query INSERT específica para MySQL
-func (p *MySQLProvider) BuildInsertQuery(entity odata.EntityMetadata, data map[string]interface{}) (string, []interface{}, error) {
+func (p *MySQLProvider) BuildInsertQuery(entity EntityMetadata, data map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
@@ -182,7 +183,7 @@ func (p *MySQLProvider) BuildInsertQuery(entity odata.EntityMetadata, data map[s
 
 	for key, value := range data {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -228,7 +229,7 @@ func (p *MySQLProvider) BuildInsertQuery(entity odata.EntityMetadata, data map[s
 }
 
 // BuildUpdateQuery constrói uma query UPDATE específica para MySQL
-func (p *MySQLProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[string]interface{}, keyValues map[string]interface{}) (string, []interface{}, error) {
+func (p *MySQLProvider) BuildUpdateQuery(entity EntityMetadata, data map[string]interface{}, keyValues map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
@@ -240,7 +241,7 @@ func (p *MySQLProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[s
 	// Constrói as cláusulas SET
 	for key, value := range data {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -280,7 +281,7 @@ func (p *MySQLProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[s
 	var whereClauses []string
 	for key, value := range keyValues {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -321,7 +322,7 @@ func (p *MySQLProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[s
 }
 
 // BuildDeleteQuery constrói uma query DELETE específica para MySQL
-func (p *MySQLProvider) BuildDeleteQuery(entity odata.EntityMetadata, keyValues map[string]interface{}) (string, []interface{}, error) {
+func (p *MySQLProvider) BuildDeleteQuery(entity EntityMetadata, keyValues map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
@@ -333,7 +334,7 @@ func (p *MySQLProvider) BuildDeleteQuery(entity odata.EntityMetadata, keyValues 
 	// Constrói a cláusula WHERE baseada nas chaves
 	for key, value := range keyValues {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p

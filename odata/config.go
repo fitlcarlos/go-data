@@ -7,26 +7,62 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// ProviderFactory é uma função que cria um provider de banco de dados
-type ProviderFactory func() DatabaseProvider
+var (
+	// Cache singleton de providers para evitar múltiplas conexões
+	providerCache   = make(map[string]DatabaseProvider)
+	providerCacheMu sync.RWMutex
+)
 
-// Registry global de providers
-var providerRegistry = make(map[string]ProviderFactory)
+// CreateProviderFromConfig cria um provider baseado no config (singleton por connectionString)
+func (c *EnvConfig) CreateProviderFromConfig() DatabaseProvider {
+	// Cria chave única baseada na connection string
+	cacheKey := fmt.Sprintf("%s:%s@%s:%s/%s", c.DBDriver, c.DBUser, c.DBHost, c.DBPort, c.DBName)
 
-// RegisterProvider registra uma factory de provider para um tipo específico
-func RegisterProvider(dbType string, factory ProviderFactory) {
-	providerRegistry[dbType] = factory
+	// Verifica se já existe no cache
+	providerCacheMu.RLock()
+	if cached, exists := providerCache[cacheKey]; exists {
+		providerCacheMu.RUnlock()
+		return cached
+	}
+	providerCacheMu.RUnlock()
+
+	// Cria novo provider
+	providerCacheMu.Lock()
+	defer providerCacheMu.Unlock()
+
+	// Double-check se outro goroutine criou enquanto esperávamos o lock
+	if cached, exists := providerCache[cacheKey]; exists {
+		return cached
+	}
+
+	var provider DatabaseProvider
+	switch c.DBDriver {
+	case "postgresql", "postgres", "pgx":
+		provider = NewPostgreSQLProvider()
+	case "mysql":
+		provider = NewMySQLProvider()
+	case "oracle":
+		provider = NewOracleProvider()
+	default:
+		return nil
+	}
+
+	if provider != nil {
+		providerCache[cacheKey] = provider
+	}
+
+	return provider
 }
 
-// CreateProviderFromConfig cria um provider baseado no config
-func (c *EnvConfig) CreateProviderFromConfig() DatabaseProvider {
-	if factory, exists := providerRegistry[c.DBDriver]; exists {
-		return factory()
-	}
-	return nil
+// ClearProviderCache limpa o cache de providers (útil para testes)
+func ClearProviderCache() {
+	providerCacheMu.Lock()
+	defer providerCacheMu.Unlock()
+	providerCache = make(map[string]DatabaseProvider)
 }
 
 // EnvConfig representa as configurações carregadas do arquivo .env
@@ -43,6 +79,9 @@ type EnvConfig struct {
 	DBMaxOpenConns     int
 	DBMaxIdleConns     int
 	DBConnMaxLifetime  time.Duration
+	DBConnMaxIdleTime  time.Duration
+	DBLogSQL           bool // Habilita/desabilita logs de queries SQL
+	LogPayloads        bool // Habilita/desabilita logs de payloads de request/response
 
 	// Configurações do servidor OData
 	ServerHost              string
@@ -211,6 +250,9 @@ func (c *EnvConfig) parseVariables() {
 	c.DBMaxOpenConns = c.getEnvInt("DB_MAX_OPEN_CONNS", DefaultMaxConnections)
 	c.DBMaxIdleConns = c.getEnvInt("DB_MAX_IDLE_CONNS", DefaultMinConnections)
 	c.DBConnMaxLifetime = c.getEnvDuration("DB_CONN_MAX_LIFETIME", DefaultMaxIdleTime)
+	c.DBConnMaxIdleTime = c.getEnvDuration("DB_CONN_MAX_IDLE_TIME", DefaultMaxIdleTime)
+	c.DBLogSQL = c.getEnvBool("DB_LOG_SQL", false)      // Padrão: desabilitado
+	c.LogPayloads = c.getEnvBool("LOG_PAYLOADS", false) // Padrão: desabilitado
 
 	// Configurações do servidor OData
 	c.ServerHost = c.getEnvString("SERVER_HOST", "localhost")
@@ -323,7 +365,7 @@ func (c *EnvConfig) BuildConnectionString() string {
 	case "oracle":
 		return fmt.Sprintf("oracle://%s:%s@%s:%s/%s",
 			c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-	case "postgres", "postgresql":
+	case "postgres", "postgresql", "pgx":
 		return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 			c.DBHost, c.DBPort, c.DBUser, c.DBPassword, c.DBName)
 	case "mysql":
@@ -362,6 +404,7 @@ func (c *EnvConfig) ToServerConfig() *ServerConfig {
 		CertKeyFile:       c.ServerTLSKeyFile,
 		EnableJWT:         c.JWTEnabled,
 		RequireAuth:       c.JWTRequireAuth,
+		DBLogSQL:          c.DBLogSQL, // Copia configuração de log SQL do .env
 	}
 
 	// Configura JWT se habilitado

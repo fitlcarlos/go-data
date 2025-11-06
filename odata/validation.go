@@ -43,15 +43,12 @@ func DefaultValidationConfig() *ValidationConfig {
 
 var (
 	// Compiled regex patterns for performance
-	propertyNameRegex    *regexp.Regexp
 	sqlInjectionPatterns []*regexp.Regexp
 	xssPatterns          []*regexp.Regexp
 )
 
 func init() {
 	// Compila regex patterns na inicialização
-	propertyNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_\.]+$`)
-
 	// Padrões comuns de SQL injection
 	sqlInjectionPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)(\s|^)(union|select|insert|update|delete|drop|create|alter|exec|execute|script|javascript|<script)(\s|$)`),

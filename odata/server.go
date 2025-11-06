@@ -208,6 +208,9 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 		return c.Next()
 	})
 
+	// Middleware de logging de payloads (se habilitado)
+	server.router.Use(server.PayloadLoggerMiddleware())
+
 	// Middleware de conexão de banco de dados (transparente)
 	server.router.Use(server.DatabaseMiddleware())
 
@@ -217,6 +220,9 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 	}
 
 	server.setupBaseRoutes()
+
+	// Verifica e loga status da conexão do banco de dados
+	server.logDatabaseConnectionStatus()
 
 	return server
 }
@@ -621,6 +627,42 @@ func (s *Server) createServiceConfig() *service.Config {
 	}
 
 	return svcConfig
+}
+
+// logDatabaseConnectionStatus verifica e loga o status da conexão do banco de dados
+func (s *Server) logDatabaseConnectionStatus() {
+	if s.provider == nil {
+		s.logger.Printf("⚠️  Banco de dados: Nenhum provider configurado")
+		return
+	}
+
+	conn := s.provider.GetConnection()
+	if conn == nil {
+		s.logger.Printf("❌ Banco de dados: Conexão não disponível - Provider criado mas sem conexão válida")
+		return
+	}
+
+	// Testa a conexão
+	if err := conn.Ping(); err != nil {
+		s.logger.Printf("❌ Banco de dados: Falha na conexão - %v", err)
+		return
+	}
+
+	// Obtém informações do provider
+	driverName := s.provider.GetDriverName()
+
+	// Tenta obter informações de configuração do .env
+	config, err := LoadEnvOrDefault()
+	var dbInfo string
+	if err == nil && config != nil {
+		dbInfo = fmt.Sprintf("%s@%s:%s/%s", config.DBUser, config.DBHost, config.DBPort, config.DBName)
+	} else {
+		dbInfo = "conexão estabelecida"
+	}
+
+	s.logger.Printf("✅ Banco de dados: Conectado com sucesso (%s)", driverName)
+	s.logger.Printf("   Info: %s", dbInfo)
+	s.logger.Println("")
 }
 
 // printActiveMiddlewares imprime os middlewares globais ativos

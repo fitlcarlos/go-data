@@ -13,7 +13,7 @@ import (
 
 // processExpandedNavigationWithOrder processa navegações expandidas seguindo a ordem OData v4
 // Com otimização para evitar problema N+1 usando batching
-func (s *BaseEntityService) processExpandedNavigationWithOrder(ctx context.Context, results []any, expandOptions []ExpandOption) ([]any, error) {
+func (s *BaseEntityService) processExpandedNavigationWithOrder(results []any, expandOptions []ExpandOption) ([]any, error) {
 	if len(results) == 0 {
 		return results, nil
 	}
@@ -71,54 +71,6 @@ func (s *BaseEntityService) processExpandedNavigationWithOrder(ctx context.Conte
 	}
 
 	return results, nil
-}
-
-// expandNavigationPropertyWithOrder expande uma propriedade de navegação seguindo a ordem OData v4
-func (s *BaseEntityService) expandNavigationPropertyWithOrder(ctx context.Context, entity *OrderedEntity, expandOption ExpandOption) (*OrderedEntity, error) {
-	// Encontra a propriedade de navegação nos metadados (comparação case-insensitive)
-	var navProperty *PropertyMetadata
-	for _, prop := range s.metadata.Properties {
-		if strings.EqualFold(prop.Name, expandOption.Property) && prop.IsNavigation {
-			navProperty = &prop
-			break
-		}
-	}
-
-	if navProperty == nil {
-		// Debug: adiciona informações sobre as propriedades disponíveis
-		var availableProps []string
-		for _, prop := range s.metadata.Properties {
-			if prop.IsNavigation {
-				availableProps = append(availableProps, prop.Name)
-			}
-		}
-		return entity, fmt.Errorf("navigation property %s not found. Available navigation properties: %v", expandOption.Property, availableProps)
-	}
-
-	// Busca entidades relacionadas aplicando a ordem OData v4
-	relatedEntities, err := s.findRelatedEntitiesWithOrder(ctx, navProperty, entity, expandOption)
-	if err != nil {
-		return entity, fmt.Errorf("failed to find related entities for property %s: %w", expandOption.Property, err)
-	}
-
-	// Adiciona as entidades relacionadas ao resultado
-	if navProperty.IsCollection {
-		if relatedEntities == nil {
-			entity.Set(navProperty.Name, []any{})
-		} else {
-			entity.Set(navProperty.Name, relatedEntities)
-		}
-	} else {
-		if relatedEntities == nil {
-			entity.Set(navProperty.Name, nil)
-		} else if len(relatedEntities) > 0 {
-			entity.Set(navProperty.Name, relatedEntities[0])
-		} else {
-			entity.Set(navProperty.Name, nil)
-		}
-	}
-
-	return entity, nil
 }
 
 // findRelatedEntitiesWithOrder encontra entidades relacionadas seguindo a ordem OData v4

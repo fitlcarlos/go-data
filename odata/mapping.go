@@ -485,7 +485,7 @@ func (m *EntityMapper) isRelationship(t reflect.Type) bool {
 
 // isNullableType verifica se é um tipo nullable
 func (m *EntityMapper) isNullableType(t reflect.Type) bool {
-	return t.PkgPath() == "github.com/fitlcarlos/go-data/pkg/nullable"
+	return t.PkgPath() == "github.com/fitlcarlos/go-data/nullable"
 }
 
 // isPrimitiveType verifica se é um tipo primitivo
@@ -511,7 +511,7 @@ func (m *EntityMapper) mapGoType(t reflect.Type) string {
 	}
 
 	// Verifica tipos nullable
-	if t.PkgPath() == "github.com/fitlcarlos/go-data/pkg/nullable" {
+	if t.PkgPath() == "github.com/fitlcarlos/go-data/nullable" {
 		switch t.Name() {
 		case "Int64":
 			return "int64"

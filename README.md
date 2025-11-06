@@ -283,7 +283,7 @@ package main
 import (
     "log"
     
-    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/odata"
 )
 
 func main() {
@@ -394,7 +394,7 @@ package main
 import (
     "log"
     
-    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/odata"
 )
 
 // Entidade de exemplo
@@ -425,8 +425,7 @@ import (
     "database/sql"
     "log"
     
-    "github.com/fitlcarlos/go-data/pkg/odata"
-    "github.com/fitlcarlos/go-data/pkg/providers"
+    "github.com/fitlcarlos/go-data/odata"
     _ "github.com/go-sql-driver/mysql"
 )
 
@@ -688,7 +687,7 @@ import (
     "os"
     "time"
     
-    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/odata"
 )
 
 func main() {
@@ -819,7 +818,7 @@ JWT_ALGORITHM=HS256
 ```
 
 ```go
-import "github.com/fitlcarlos/go-data/pkg/odata"
+import "github.com/fitlcarlos/go-data/odata"
 
 func main() {
     server := odata.NewServer()
@@ -1346,7 +1345,7 @@ A implementação `BasicAuth` oferece autenticação HTTP Basic completa:
 
 ```go
 import (
-    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/odata"
 )
 
 func main() {
@@ -2185,7 +2184,7 @@ server.GetConfig().ValidationConfig = prodConfig
 package main
 
 import (
-    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/odata"
 )
 
 func main() {
@@ -2452,7 +2451,7 @@ RATE_LIMIT_HEADERS=true
 ### Configuração Programática
 
 ```go
-import "github.com/fitlcarlos/go-data/pkg/odata"
+import "github.com/fitlcarlos/go-data/odata"
 
 // Configuração básica de rate limit
 rateLimitConfig := &odata.RateLimitConfig{
@@ -2577,8 +2576,7 @@ import (
     "log"
     "time"
     
-    "github.com/fitlcarlos/go-data/pkg/odata"
-    _ "github.com/fitlcarlos/go-data/pkg/providers"
+    "github.com/fitlcarlos/go-data/odata"
 )
 
 func main() {
@@ -2685,7 +2683,7 @@ package main
 import (
     "log"
     
-    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/odata"
 )
 
 func main() {
@@ -4028,7 +4026,7 @@ Orders []Order `cascade:"[SaveUpdate, Remove, Refresh]"`
 ### Tipos Nullable
 
 ```go
-import "github.com/fitlcarlos/go-data/pkg/nullable"
+import "github.com/fitlcarlos/go-data/odata"
 
 type User struct {
     ID      int64           `json:"id"`
@@ -4134,7 +4132,7 @@ server.Use(LogMiddleware)
 package main
 
 import (
-    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/odata"
     "github.com/gofiber/fiber/v3"
 )
 
@@ -4286,34 +4284,34 @@ curl http://localhost:8080/api/v1/test/context
 ### PostgreSQL
 ```go
 import (
-    "github.com/fitlcarlos/go-data/pkg/providers"
+    "github.com/fitlcarlos/go-data/odata"
     _ "github.com/jackc/pgx/v5/stdlib"
 )
 
 db, err := sql.Open("pgx", "postgres://user:password@localhost/database")
-provider := providers.NewPostgreSQLProvider(db)
+provider := odata.NewPostgreSQLProvider(db)
 ```
 
 ### Oracle
 ```go
 import (
-    "github.com/fitlcarlos/go-data/pkg/providers"
+    "github.com/fitlcarlos/go-data/odata"
     _ "github.com/sijms/go-ora/v2"
 )
 
 db, err := sql.Open("oracle", "oracle://user:password@localhost:1521/xe")
-provider := providers.NewOracleProvider(db)
+provider := odata.NewOracleProvider(db)
 ```
 
 ### MySQL
 ```go
 import (
-    "github.com/fitlcarlos/go-data/pkg/providers"
+    "github.com/fitlcarlos/go-data/odata"
     _ "github.com/go-sql-driver/mysql"
 )
 
 db, err := sql.Open("mysql", "user:password@tcp(localhost:3306)/database")
-provider := providers.NewMySQLProvider(db)
+provider := odata.NewMySQLProvider(db)
 ```
 
 ## 🌐 Endpoints OData
@@ -4779,7 +4777,7 @@ package main
 
 import (
     "log"
-    "github.com/fitlcarlos/go-data/pkg/odata"
+    "github.com/fitlcarlos/go-data/odata"
 )
 
 func main() {

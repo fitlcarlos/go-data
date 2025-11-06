@@ -156,7 +156,7 @@ func (s *BaseEntityService) Query(ctx context.Context, options QueryOptions) (*O
 
 	// 6. Processa navegações expandidas seguindo a ordem recursivamente
 	if len(expandOptions) > 0 {
-		expandedResults, err := s.processExpandedNavigationWithOrder(ctx, results, expandOptions)
+		expandedResults, err := s.processExpandedNavigationWithOrder(results, expandOptions)
 		if err != nil {
 			// Log do erro mas tenta continuar com navigation links
 			log.Printf("Warning: Failed to process expanded navigation: %v. Continuing with navigation links.", err)

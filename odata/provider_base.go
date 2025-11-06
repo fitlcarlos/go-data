@@ -1,4 +1,4 @@
-package providers
+package odata
 
 import (
 	"context"
@@ -7,17 +7,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/fitlcarlos/go-data/pkg/odata"
 )
 
 // BaseProvider implementa funcionalidades comuns a todos os providers
 type BaseProvider struct {
 	db            *sql.DB
 	driverName    string
-	queryBuilder  *odata.QueryBuilder
-	computeParser *odata.ComputeParser
-	searchParser  *odata.SearchParser
+	queryBuilder  *QueryBuilder
+	computeParser *ComputeParser
+	searchParser  *SearchParser
 }
 
 // NewBaseProvider cria um novo BaseProvider
@@ -31,7 +29,7 @@ func NewBaseProvider(connection *sql.DB, driverName string) *BaseProvider {
 // InitQueryBuilder inicializa o query builder
 func (p *BaseProvider) InitQueryBuilder() {
 	if p.queryBuilder == nil {
-		p.queryBuilder = odata.NewQueryBuilder(p.driverName)
+		p.queryBuilder = NewQueryBuilder(p.driverName)
 		if p.queryBuilder == nil {
 			panic("Failed to initialize QueryBuilder")
 		}
@@ -39,7 +37,7 @@ func (p *BaseProvider) InitQueryBuilder() {
 }
 
 // GetQueryBuilder retorna o query builder, inicializando se necessário
-func (p *BaseProvider) GetQueryBuilder() *odata.QueryBuilder {
+func (p *BaseProvider) GetQueryBuilder() *QueryBuilder {
 	if p.queryBuilder == nil {
 		p.InitQueryBuilder()
 	}
@@ -49,10 +47,10 @@ func (p *BaseProvider) GetQueryBuilder() *odata.QueryBuilder {
 // InitParsers inicializa os parsers de compute e search
 func (p *BaseProvider) InitParsers() {
 	if p.computeParser == nil {
-		p.computeParser = odata.NewComputeParser()
+		p.computeParser = NewComputeParser()
 	}
 	if p.searchParser == nil {
-		p.searchParser = odata.NewSearchParser()
+		p.searchParser = NewSearchParser()
 	}
 }
 
@@ -83,7 +81,7 @@ func (p *BaseProvider) Close() error {
 }
 
 // BuildSelectQueryOptimized constrói query SELECT otimizada usando o novo query builder
-func (p *BaseProvider) BuildSelectQueryOptimized(ctx context.Context, metadata odata.EntityMetadata, options odata.QueryOptions) (string, []interface{}, error) {
+func (p *BaseProvider) BuildSelectQueryOptimized(ctx context.Context, metadata EntityMetadata, options QueryOptions) (string, []interface{}, error) {
 	p.InitQueryBuilder()
 	p.InitParsers()
 
@@ -132,8 +130,8 @@ func (p *BaseProvider) BuildSelectQueryOptimized(ctx context.Context, metadata o
 	}
 
 	// LIMIT/OFFSET clause
-	topValue := odata.GetTopValue(options.Top)
-	skipValue := odata.GetSkipValue(options.Skip)
+	topValue := GetTopValue(options.Top)
+	skipValue := GetSkipValue(options.Skip)
 	qb := p.GetQueryBuilder()
 	limitClause := qb.BuildLimitClause(topValue, skipValue)
 	if limitClause != "" {
@@ -145,9 +143,9 @@ func (p *BaseProvider) BuildSelectQueryOptimized(ctx context.Context, metadata o
 }
 
 // buildSelectWithCompute constrói cláusula SELECT incluindo campos computados
-func (p *BaseProvider) buildSelectWithCompute(ctx context.Context, metadata odata.EntityMetadata, options odata.QueryOptions) (string, []interface{}, error) {
+func (p *BaseProvider) buildSelectWithCompute(ctx context.Context, metadata EntityMetadata, options QueryOptions) (string, []interface{}, error) {
 	// Campos regulares
-	selectFields := odata.GetSelectedProperties(options.Select)
+	selectFields := GetSelectedProperties(options.Select)
 	qb := p.GetQueryBuilder()
 	baseSelect := qb.BuildSelectClause(metadata, selectFields)
 
@@ -172,7 +170,7 @@ func (p *BaseProvider) buildSelectWithCompute(ctx context.Context, metadata odat
 }
 
 // buildWhereWithSearch constrói cláusula WHERE combinando filtro e busca
-func (p *BaseProvider) buildWhereWithSearch(ctx context.Context, metadata odata.EntityMetadata, options odata.QueryOptions) (string, []interface{}, error) {
+func (p *BaseProvider) buildWhereWithSearch(ctx context.Context, metadata EntityMetadata, options QueryOptions) (string, []interface{}, error) {
 	var filterSQL string
 	var filterArgs []interface{}
 	var searchSQL string
@@ -204,12 +202,12 @@ func (p *BaseProvider) buildWhereWithSearch(ctx context.Context, metadata odata.
 }
 
 // BuildWhereClause constrói a cláusula WHERE baseada no filtro OData (método legado)
-func (p *BaseProvider) BuildWhereClause(filter string, metadata odata.EntityMetadata) (string, []interface{}, error) {
+func (p *BaseProvider) BuildWhereClause(filter string, metadata EntityMetadata) (string, []interface{}, error) {
 	if filter == "" {
 		return "", nil, nil
 	}
 
-	parser := odata.NewODataParser()
+	parser := NewODataParser()
 	expressions, err := parser.ParseFilter(filter)
 	if err != nil {
 		return "", nil, err
@@ -220,7 +218,7 @@ func (p *BaseProvider) BuildWhereClause(filter string, metadata odata.EntityMeta
 
 	for _, expr := range expressions {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range metadata.Properties {
 			if p.Name == expr.Property {
 				prop = &p
@@ -253,40 +251,40 @@ func (p *BaseProvider) BuildWhereClause(filter string, metadata odata.EntityMeta
 }
 
 // buildCondition constrói uma condição individual do WHERE
-func (p *BaseProvider) buildCondition(expr odata.FilterExpression, prop odata.PropertyMetadata) (string, interface{}, error) {
+func (p *BaseProvider) buildCondition(expr FilterExpression, prop PropertyMetadata) (string, interface{}, error) {
 	columnName := prop.ColumnName
 	if columnName == "" {
 		columnName = prop.Name
 	}
 
 	switch expr.Operator {
-	case odata.FilterEq:
+	case FilterEq:
 		return fmt.Sprintf("%s = ?", columnName), expr.Value, nil
-	case odata.FilterNe:
+	case FilterNe:
 		return fmt.Sprintf("%s != ?", columnName), expr.Value, nil
-	case odata.FilterGt:
+	case FilterGt:
 		return fmt.Sprintf("%s > ?", columnName), expr.Value, nil
-	case odata.FilterGe:
+	case FilterGe:
 		return fmt.Sprintf("%s >= ?", columnName), expr.Value, nil
-	case odata.FilterLt:
+	case FilterLt:
 		return fmt.Sprintf("%s < ?", columnName), expr.Value, nil
-	case odata.FilterLe:
+	case FilterLe:
 		return fmt.Sprintf("%s <= ?", columnName), expr.Value, nil
-	case odata.FilterContains:
+	case FilterContains:
 		return fmt.Sprintf("%s LIKE ?", columnName), fmt.Sprintf("%%%s%%", expr.Value), nil
-	case odata.FilterStartsWith:
+	case FilterStartsWith:
 		return fmt.Sprintf("%s LIKE ?", columnName), fmt.Sprintf("%s%%", expr.Value), nil
-	case odata.FilterEndsWith:
+	case FilterEndsWith:
 		return fmt.Sprintf("%s LIKE ?", columnName), fmt.Sprintf("%%%s", expr.Value), nil
 	// Funções de string - estas são tratadas de forma especial
-	case odata.FilterLength, odata.FilterToLower, odata.FilterToUpper, odata.FilterTrim,
-		odata.FilterIndexOf, odata.FilterConcat, odata.FilterSubstring:
+	case FilterLength, FilterToLower, FilterToUpper, FilterTrim,
+		FilterIndexOf, FilterConcat, FilterSubstring:
 		return p.buildStringFunctionCondition(expr, columnName)
 	// Operadores matemáticos - tratados de forma especial
-	case odata.FilterAdd, odata.FilterSub, odata.FilterMul, odata.FilterDiv, odata.FilterMod:
+	case FilterAdd, FilterSub, FilterMul, FilterDiv, FilterMod:
 		return p.buildMathFunctionCondition(expr, columnName)
 	// Funções de data/hora - tratadas de forma especial
-	case odata.FilterYear, odata.FilterMonth, odata.FilterDay, odata.FilterHour, odata.FilterMinute, odata.FilterSecond, odata.FilterNow:
+	case FilterYear, FilterMonth, FilterDay, FilterHour, FilterMinute, FilterSecond, FilterNow:
 		return p.buildDateTimeFunctionCondition(expr, columnName)
 	default:
 		return "", nil, fmt.Errorf("unsupported operator: %s", expr.Operator)
@@ -294,12 +292,12 @@ func (p *BaseProvider) buildCondition(expr odata.FilterExpression, prop odata.Pr
 }
 
 // BuildOrderByClause constrói a cláusula ORDER BY baseada no orderBy OData
-func (p *BaseProvider) BuildOrderByClause(orderBy string, metadata odata.EntityMetadata) (string, error) {
+func (p *BaseProvider) BuildOrderByClause(orderBy string, metadata EntityMetadata) (string, error) {
 	if orderBy == "" {
 		return "", nil
 	}
 
-	parser := odata.NewODataParser()
+	parser := NewODataParser()
 	expressions, err := parser.ParseOrderBy(orderBy)
 	if err != nil {
 		return "", err
@@ -309,7 +307,7 @@ func (p *BaseProvider) BuildOrderByClause(orderBy string, metadata odata.EntityM
 
 	for _, expr := range expressions {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range metadata.Properties {
 			if strings.EqualFold(p.Name, expr.Property) {
 				prop = &p
@@ -327,7 +325,7 @@ func (p *BaseProvider) BuildOrderByClause(orderBy string, metadata odata.EntityM
 		}
 
 		direction := "ASC"
-		if expr.Direction == odata.OrderDesc {
+		if expr.Direction == OrderDesc {
 			direction = "DESC"
 		}
 
@@ -338,43 +336,43 @@ func (p *BaseProvider) BuildOrderByClause(orderBy string, metadata odata.EntityM
 }
 
 // buildStringFunctionCondition constrói condições para funções de string
-func (p *BaseProvider) buildStringFunctionCondition(expr odata.FilterExpression, columnName string) (string, interface{}, error) {
+func (p *BaseProvider) buildStringFunctionCondition(expr FilterExpression, columnName string) (string, interface{}, error) {
 	switch expr.Operator {
-	case odata.FilterLength:
+	case FilterLength:
 		// length(Property) eq value
 		if expr.Value == nil {
 			return "", nil, fmt.Errorf("length function requires a value to compare")
 		}
 		return fmt.Sprintf("LENGTH(%s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterToLower:
+	case FilterToLower:
 		// tolower(Property) eq value
 		if expr.Value == nil {
 			return "", nil, fmt.Errorf("tolower function requires a value to compare")
 		}
 		return fmt.Sprintf("LOWER(%s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterToUpper:
+	case FilterToUpper:
 		// toupper(Property) eq value
 		if expr.Value == nil {
 			return "", nil, fmt.Errorf("toupper function requires a value to compare")
 		}
 		return fmt.Sprintf("UPPER(%s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterTrim:
+	case FilterTrim:
 		// trim(Property) eq value
 		if expr.Value == nil {
 			return "", nil, fmt.Errorf("trim function requires a value to compare")
 		}
 		return fmt.Sprintf("TRIM(%s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterIndexOf:
+	case FilterIndexOf:
 		// indexof(Property, substring) eq position
 		// expr.Value contém a substring a procurar
 		// A comparação seria feita em uma expressão maior como: indexof(Name, 'test') eq 0
 		return fmt.Sprintf("POSITION(? IN %s) - 1", columnName), expr.Value, nil
 
-	case odata.FilterConcat:
+	case FilterConcat:
 		// concat(Property, arg1, arg2, ...) eq value
 		if len(expr.Arguments) == 0 {
 			return "", nil, fmt.Errorf("concat function requires arguments")
@@ -394,7 +392,7 @@ func (p *BaseProvider) buildStringFunctionCondition(expr odata.FilterExpression,
 		args = append(args, expr.Value)
 		return concatExpr, args, nil
 
-	case odata.FilterSubstring:
+	case FilterSubstring:
 		// substring(Property, start[, length]) eq value
 		if len(expr.Arguments) == 0 {
 			return "", nil, fmt.Errorf("substring function requires arguments")
@@ -426,7 +424,7 @@ func (p *BaseProvider) buildStringFunctionCondition(expr odata.FilterExpression,
 }
 
 // buildMathFunctionCondition constrói condições para operadores matemáticos
-func (p *BaseProvider) buildMathFunctionCondition(expr odata.FilterExpression, columnName string) (string, interface{}, error) {
+func (p *BaseProvider) buildMathFunctionCondition(expr FilterExpression, columnName string) (string, interface{}, error) {
 	if len(expr.Arguments) != 1 {
 		return "", nil, fmt.Errorf("math function %s requires exactly 1 argument", expr.Operator)
 	}
@@ -438,15 +436,15 @@ func (p *BaseProvider) buildMathFunctionCondition(expr odata.FilterExpression, c
 	// Converte o argumento para o tipo apropriado
 	var sqlOperator string
 	switch expr.Operator {
-	case odata.FilterAdd:
+	case FilterAdd:
 		sqlOperator = "+"
-	case odata.FilterSub:
+	case FilterSub:
 		sqlOperator = "-"
-	case odata.FilterMul:
+	case FilterMul:
 		sqlOperator = "*"
-	case odata.FilterDiv:
+	case FilterDiv:
 		sqlOperator = "/"
-	case odata.FilterMod:
+	case FilterMod:
 		sqlOperator = "%"
 	default:
 		return "", nil, fmt.Errorf("unsupported math operator: %s", expr.Operator)
@@ -461,37 +459,37 @@ func (p *BaseProvider) buildMathFunctionCondition(expr odata.FilterExpression, c
 }
 
 // buildDateTimeFunctionCondition constrói condições para funções de data/hora
-func (p *BaseProvider) buildDateTimeFunctionCondition(expr odata.FilterExpression, columnName string) (string, interface{}, error) {
-	if expr.Value == nil && expr.Operator != odata.FilterNow {
+func (p *BaseProvider) buildDateTimeFunctionCondition(expr FilterExpression, columnName string) (string, interface{}, error) {
+	if expr.Value == nil && expr.Operator != FilterNow {
 		return "", nil, fmt.Errorf("datetime function %s requires a value to compare", expr.Operator)
 	}
 
 	switch expr.Operator {
-	case odata.FilterYear:
+	case FilterYear:
 		// year(DateField) eq 2023
 		return fmt.Sprintf("EXTRACT(YEAR FROM %s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterMonth:
+	case FilterMonth:
 		// month(DateField) eq 12
 		return fmt.Sprintf("EXTRACT(MONTH FROM %s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterDay:
+	case FilterDay:
 		// day(DateField) eq 25
 		return fmt.Sprintf("EXTRACT(DAY FROM %s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterHour:
+	case FilterHour:
 		// hour(DateTimeField) eq 14
 		return fmt.Sprintf("EXTRACT(HOUR FROM %s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterMinute:
+	case FilterMinute:
 		// minute(DateTimeField) eq 30
 		return fmt.Sprintf("EXTRACT(MINUTE FROM %s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterSecond:
+	case FilterSecond:
 		// second(DateTimeField) eq 45
 		return fmt.Sprintf("EXTRACT(SECOND FROM %s) = ?", columnName), expr.Value, nil
 
-	case odata.FilterNow:
+	case FilterNow:
 		// now() eq '2023-12-25T10:30:00'
 		return "CURRENT_TIMESTAMP = ?", expr.Value, nil
 
@@ -501,7 +499,7 @@ func (p *BaseProvider) buildDateTimeFunctionCondition(expr odata.FilterExpressio
 }
 
 // BuildSelectClause constrói a cláusula SELECT baseada no select OData
-func (p *BaseProvider) BuildSelectClause(selectFields []string, metadata odata.EntityMetadata) (string, error) {
+func (p *BaseProvider) BuildSelectClause(selectFields []string, metadata EntityMetadata) (string, error) {
 	if len(selectFields) == 0 {
 		// Seleciona todos os campos não-navegação
 		var columns []string
@@ -520,7 +518,7 @@ func (p *BaseProvider) BuildSelectClause(selectFields []string, metadata odata.E
 	var columns []string
 	for _, field := range selectFields {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range metadata.Properties {
 			if p.Name == field {
 				prop = &p

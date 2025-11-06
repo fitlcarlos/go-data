@@ -114,7 +114,8 @@ func (s *Server) handleEntityCollection(c fiber.Ctx) error {
 // handleGetCollection lida com GET na coleção de entidades
 func (s *Server) handleGetCollection(c fiber.Ctx, service EntityService) error {
 	// Cria contexto com referência ao Fiber Context para multi-tenant
-	ctx := context.WithValue(c.Context(), FiberContextKey, c)
+	// Usa background context para garantir que não seja cancelado quando a requisição HTTP terminar
+	ctx := context.WithValue(context.Background(), FiberContextKey, c)
 
 	// Extrai o nome da entidade
 	entityName := s.extractEntityName(c.Path())
@@ -218,7 +219,8 @@ func (s *Server) handleGetEntity(c fiber.Ctx, service EntityService, keys map[st
 	}
 
 	// Cria contexto com referência ao Fiber Context para multi-tenant
-	ctx := context.WithValue(c.Context(), FiberContextKey, c)
+	// Usa background context para garantir que não seja cancelado quando a requisição HTTP terminar
+	ctx := context.WithValue(context.Background(), FiberContextKey, c)
 
 	// Extrai o nome da entidade
 	entityName := s.extractEntityName(c.Path())

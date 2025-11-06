@@ -25,6 +25,7 @@ func (d *PostgreSQLDialect) SetupNodeMap() NodeMap {
 	nodeMap["ge"] = "(%s >= %s)"
 	nodeMap["lt"] = "(%s < %s)"
 	nodeMap["le"] = "(%s <= %s)"
+	nodeMap["in"] = "(%s IN (%s))" // Operador IN com múltiplos valores
 
 	// Operadores lógicos
 	nodeMap["and"] = "(%s AND %s)"

@@ -1,26 +1,14 @@
-package providers
+package odata
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
-	"github.com/fitlcarlos/go-data/pkg/odata"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
-
-// Registrar factory do PostgreSQL no registry
-func init() {
-	odata.RegisterProvider("postgresql", func() odata.DatabaseProvider {
-		return NewPostgreSQLProvider()
-	})
-	odata.RegisterProvider("postgres", func() odata.DatabaseProvider {
-		return NewPostgreSQLProvider()
-	})
-}
 
 // PostgreSQLProvider implementa o provider para PostgreSQL
 type PostgreSQLProvider struct {
@@ -33,7 +21,8 @@ func NewPostgreSQLProvider(connection ...*sql.DB) *PostgreSQLProvider {
 
 	// Se não recebeu conexão, tenta carregar do .env
 	if len(connection) == 0 || connection[0] == nil {
-		config, err := odata.LoadEnvOrDefault()
+		log.Printf("🔍 [PROVIDER] Nenhuma conexão passada, carregando do .env...")
+		config, err := LoadEnvOrDefault()
 		if err != nil {
 			log.Printf("Aviso: Não foi possível carregar configurações do .env: %v", err)
 			return &PostgreSQLProvider{
@@ -62,14 +51,25 @@ func NewPostgreSQLProvider(connection ...*sql.DB) *PostgreSQLProvider {
 			// Configura pool de conexões
 			db.SetMaxOpenConns(config.DBMaxOpenConns)
 			db.SetMaxIdleConns(config.DBMaxIdleConns)
-			db.SetConnMaxLifetime(config.DBConnMaxLifetime)
+
+			// Se DBConnMaxLifetime for 0, configura para 1 hora (padrão razoável)
+			lifetime := config.DBConnMaxLifetime
+			if lifetime == 0 {
+				lifetime = time.Hour
+			}
+			db.SetConnMaxLifetime(lifetime)
+
+			// Se DBConnMaxIdleTime for 0, configura para 10 minutos (padrão razoável)
+			// IMPORTANTE: Quando MaxIdleTime é 0, o Go usa 90 segundos (padrão do SO)
+			idleTime := config.DBConnMaxIdleTime
+			if idleTime == 0 {
+				idleTime = 10 * time.Minute
+			}
+			db.SetConnMaxIdleTime(idleTime)
 
 			// Testa conexão
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			if err := db.PingContext(ctx); err != nil {
-				log.Printf("Erro ao testar conexão PostgreSQL: %v", err)
+			if err := db.Ping(); err != nil {
+				log.Printf("❌ [BANCO DE DADOS] Falha ao conectar ao PostgreSQL: %v", err)
 				db.Close()
 				return &PostgreSQLProvider{
 					BaseProvider: BaseProvider{
@@ -93,6 +93,8 @@ func NewPostgreSQLProvider(connection ...*sql.DB) *PostgreSQLProvider {
 	if db != nil {
 		provider.InitQueryBuilder()
 		provider.InitParsers()
+	} else {
+		log.Printf("⚠️  [BANCO DE DADOS] PostgreSQL Provider criado SEM conexão válida - Configure DB_USER e DB_PASSWORD no .env")
 	}
 
 	return provider
@@ -115,9 +117,9 @@ func (p *PostgreSQLProvider) Connect(connectionString string) error {
 }
 
 // BuildSelectQuery constrói uma query SELECT específica para PostgreSQL
-func (p *PostgreSQLProvider) BuildSelectQuery(entity odata.EntityMetadata, options odata.QueryOptions) (string, []interface{}, error) {
+func (p *PostgreSQLProvider) BuildSelectQuery(entity EntityMetadata, options QueryOptions) (string, []interface{}, error) {
 	// SELECT clause
-	selectFields := odata.GetSelectedProperties(options.Select)
+	selectFields := GetSelectedProperties(options.Select)
 	selectClause, err := p.BuildSelectClause(selectFields, entity)
 	if err != nil {
 		return "", nil, err
@@ -156,8 +158,8 @@ func (p *PostgreSQLProvider) BuildSelectQuery(entity odata.EntityMetadata, optio
 	}
 
 	// LIMIT e OFFSET (PostgreSQL style)
-	topValue := odata.GetTopValue(options.Top)
-	skipValue := odata.GetSkipValue(options.Skip)
+	topValue := GetTopValue(options.Top)
+	skipValue := GetSkipValue(options.Skip)
 	if topValue > 0 {
 		query += fmt.Sprintf(" LIMIT %d", topValue)
 	}
@@ -169,7 +171,7 @@ func (p *PostgreSQLProvider) BuildSelectQuery(entity odata.EntityMetadata, optio
 }
 
 // BuildInsertQuery constrói uma query INSERT específica para PostgreSQL
-func (p *PostgreSQLProvider) BuildInsertQuery(entity odata.EntityMetadata, data map[string]interface{}) (string, []interface{}, error) {
+func (p *PostgreSQLProvider) BuildInsertQuery(entity EntityMetadata, data map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
@@ -182,7 +184,7 @@ func (p *PostgreSQLProvider) BuildInsertQuery(entity odata.EntityMetadata, data 
 
 	for key, value := range data {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -229,7 +231,7 @@ func (p *PostgreSQLProvider) BuildInsertQuery(entity odata.EntityMetadata, data 
 }
 
 // BuildUpdateQuery constrói uma query UPDATE específica para PostgreSQL
-func (p *PostgreSQLProvider) BuildUpdateQuery(entity odata.EntityMetadata, data map[string]interface{}, keyValues map[string]interface{}) (string, []interface{}, error) {
+func (p *PostgreSQLProvider) BuildUpdateQuery(entity EntityMetadata, data map[string]interface{}, keyValues map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
@@ -242,7 +244,7 @@ func (p *PostgreSQLProvider) BuildUpdateQuery(entity odata.EntityMetadata, data 
 	// Constrói as cláusulas SET
 	for key, value := range data {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -283,7 +285,7 @@ func (p *PostgreSQLProvider) BuildUpdateQuery(entity odata.EntityMetadata, data 
 	var whereClauses []string
 	for key, value := range keyValues {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -325,7 +327,7 @@ func (p *PostgreSQLProvider) BuildUpdateQuery(entity odata.EntityMetadata, data 
 }
 
 // BuildDeleteQuery constrói uma query DELETE específica para PostgreSQL
-func (p *PostgreSQLProvider) BuildDeleteQuery(entity odata.EntityMetadata, keyValues map[string]interface{}) (string, []interface{}, error) {
+func (p *PostgreSQLProvider) BuildDeleteQuery(entity EntityMetadata, keyValues map[string]interface{}) (string, []interface{}, error) {
 	tableName := entity.TableName
 	if tableName == "" {
 		tableName = entity.Name
@@ -338,7 +340,7 @@ func (p *PostgreSQLProvider) BuildDeleteQuery(entity odata.EntityMetadata, keyVa
 	// Constrói a cláusula WHERE baseada nas chaves
 	for key, value := range keyValues {
 		// Encontra a propriedade nos metadados
-		var prop *odata.PropertyMetadata
+		var prop *PropertyMetadata
 		for _, p := range entity.Properties {
 			if p.Name == key {
 				prop = &p
@@ -408,30 +410,30 @@ func (p *PostgreSQLProvider) FormatDateTime(t time.Time) string {
 }
 
 // buildCondition sobrescreve o método base para usar placeholders do PostgreSQL
-func (p *PostgreSQLProvider) buildCondition(expr odata.FilterExpression, prop odata.PropertyMetadata) (string, interface{}, error) {
+func (p *PostgreSQLProvider) buildCondition(expr FilterExpression, prop PropertyMetadata) (string, interface{}, error) {
 	columnName := prop.ColumnName
 	if columnName == "" {
 		columnName = prop.Name
 	}
 
 	switch expr.Operator {
-	case odata.FilterEq:
+	case FilterEq:
 		return fmt.Sprintf("%s = $1", columnName), expr.Value, nil
-	case odata.FilterNe:
+	case FilterNe:
 		return fmt.Sprintf("%s != $1", columnName), expr.Value, nil
-	case odata.FilterGt:
+	case FilterGt:
 		return fmt.Sprintf("%s > $1", columnName), expr.Value, nil
-	case odata.FilterGe:
+	case FilterGe:
 		return fmt.Sprintf("%s >= $1", columnName), expr.Value, nil
-	case odata.FilterLt:
+	case FilterLt:
 		return fmt.Sprintf("%s < $1", columnName), expr.Value, nil
-	case odata.FilterLe:
+	case FilterLe:
 		return fmt.Sprintf("%s <= $1", columnName), expr.Value, nil
-	case odata.FilterContains:
+	case FilterContains:
 		return fmt.Sprintf("%s ILIKE $1", columnName), fmt.Sprintf("%%%s%%", expr.Value), nil
-	case odata.FilterStartsWith:
+	case FilterStartsWith:
 		return fmt.Sprintf("%s ILIKE $1", columnName), fmt.Sprintf("%s%%", expr.Value), nil
-	case odata.FilterEndsWith:
+	case FilterEndsWith:
 		return fmt.Sprintf("%s ILIKE $1", columnName), fmt.Sprintf("%%%s", expr.Value), nil
 	default:
 		return "", nil, fmt.Errorf("unsupported operator: %s", expr.Operator)
