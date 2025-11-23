@@ -18,7 +18,7 @@ func (s *BaseEntityService) scanRows(rows *sql.Rows, expandOptions []ExpandOptio
 		return nil, err
 	}
 
-	var results []any
+	results := []any{} // Inicializa como slice vazio em vez de nil
 
 	for rows.Next() {
 		// Cria um slice de interfaces para os valores
