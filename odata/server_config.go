@@ -80,6 +80,9 @@ type ServerConfig struct {
 	// Performance: Desabilita JOIN automático para expand (força batching)
 	// Default: false (usa detecção automática baseada em relacionamento)
 	DisableJoinForExpand bool
+
+	// Configurações de PATCH OData 4.01
+	PatchRemovedFormat string // Formato aceito para @odata.removed: "both", "empty", "with_reason" (default: "both")
 }
 
 // DefaultServerConfig retorna uma configuração padrão do servidor
@@ -107,5 +110,6 @@ func DefaultServerConfig() *ServerConfig {
 		RateLimitConfig:       DefaultRateLimitConfig(),
 		AuditLogConfig:        DefaultAuditLogConfig(),
 		DisableJoinForExpand:  false, // JOIN automático habilitado por padrão
+		PatchRemovedFormat:    "both", // Aceita ambos os formatos por padrão
 	}
 }

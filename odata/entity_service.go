@@ -2,6 +2,7 @@ package odata
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"strings"
@@ -535,6 +536,259 @@ func (s *BaseEntityService) Delete(ctx context.Context, keys map[string]any) err
 
 	if rowsAffected == 0 {
 		return fmt.Errorf("no rows deleted")
+	}
+
+	return nil
+}
+
+// Patch processa um PATCH com suporte a hierarquias aninhadas (INSERT/UPDATE/DELETE)
+// Se não houver hierarquia, delega para Update existente para manter compatibilidade
+func (s *BaseEntityService) Patch(ctx context.Context, keys map[string]any, entity any) (any, error) {
+	// Converte a entidade para map
+	data, err := s.entityToMap(entity)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert entity to map: %w", err)
+	}
+
+	// Obtém configuração do formato de @odata.removed
+	removedFormat := "both" // default
+	if s.server != nil && s.server.config != nil {
+		removedFormat = s.server.config.PatchRemovedFormat
+		if removedFormat == "" {
+			removedFormat = "both"
+		}
+	}
+
+	// Verifica se precisa processamento avançado (hierárquico)
+	if !hasHierarchicalStructure(data, s.metadata) {
+		// Não há hierarquia, usa fluxo simples (compatibilidade com código existente)
+		return s.Update(ctx, keys, entity)
+	}
+
+	// Processa hierarquia recursivamente
+	var operations []PatchOperation
+
+	// Processa a entidade raiz primeiro
+	rootOpType, err := identifyOperation(data, s.metadata, removedFormat)
+	if err != nil {
+		return nil, fmt.Errorf("failed to identify root operation: %w", err)
+	}
+
+	// Se a raiz é DELETE, processa apenas a raiz
+	if rootOpType == "DELETE" {
+		rootKeys := extractKeysFromEntity(data, s.metadata)
+		cleanEntity := cleanRemovedAnnotation(data)
+		operations = append(operations, PatchOperation{
+			Type:          "DELETE",
+			Entity:        cleanEntity,
+			Keys:          rootKeys,
+			NavigationPath: "",
+			EntityName:    s.metadata.Name,
+		})
+	} else {
+		// Processa propriedades de navegação recursivamente
+		if err := processPatchRecursive(ctx, s.server, data, s.metadata, "", removedFormat, &operations); err != nil {
+			log.Printf("Warning: Failed to process navigation properties: %v", err)
+		}
+
+		// Adiciona operação da raiz (UPDATE ou INSERT)
+		rootKeys := extractKeysFromEntity(data, s.metadata)
+		cleanEntity := cleanRemovedAnnotation(data)
+		// Remove propriedades de navegação do objeto raiz (já foram processadas)
+		for _, prop := range s.metadata.Properties {
+			if prop.IsNavigation {
+				delete(cleanEntity, prop.Name)
+			}
+		}
+
+		operations = append(operations, PatchOperation{
+			Type:          rootOpType,
+			Entity:        cleanEntity,
+			Keys:          rootKeys,
+			NavigationPath: "",
+			EntityName:    s.metadata.Name,
+		})
+	}
+
+	// Inicia transação única
+	conn := s.provider.GetConnection()
+	if conn == nil {
+		return nil, fmt.Errorf("database connection is nil")
+	}
+
+	tx, err := s.provider.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	defer func() {
+		if tx != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Executa operações na ordem: DELETE → UPDATE → INSERT
+	// Agrupa operações por tipo
+	var deletes, updates, inserts []PatchOperation
+	for _, op := range operations {
+		switch op.Type {
+		case "DELETE":
+			deletes = append(deletes, op)
+		case "UPDATE":
+			updates = append(updates, op)
+		case "INSERT":
+			inserts = append(inserts, op)
+		}
+	}
+
+	// Executa DELETEs primeiro
+	for _, op := range deletes {
+		if err := executePatchOperation(ctx, tx, s.server, op); err != nil {
+			return nil, fmt.Errorf("failed to execute DELETE operation for %s: %w", op.EntityName, err)
+		}
+	}
+
+	// Executa UPDATEs
+	for _, op := range updates {
+		if err := executePatchOperation(ctx, tx, s.server, op); err != nil {
+			return nil, fmt.Errorf("failed to execute UPDATE operation for %s: %w", op.EntityName, err)
+		}
+	}
+
+	// Executa INSERTs por último
+	for _, op := range inserts {
+		if err := executePatchOperation(ctx, tx, s.server, op); err != nil {
+			return nil, fmt.Errorf("failed to execute INSERT operation for %s: %w", op.EntityName, err)
+		}
+	}
+
+	// Commit da transação
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	tx = nil // Marca como nil para evitar rollback no defer
+
+	// Busca a entidade atualizada
+	return s.Get(ctx, keys)
+}
+
+// executePatchOperation executa uma operação PATCH individual dentro de uma transação
+func executePatchOperation(ctx context.Context, tx *sql.Tx, server *Server, op PatchOperation) error {
+	// Obtém o serviço da entidade
+	service := server.GetEntityService(op.EntityName)
+	if service == nil {
+		return fmt.Errorf("entity service not found: %s", op.EntityName)
+	}
+
+	// Executa operação baseada no tipo
+	switch op.Type {
+	case "DELETE":
+		return executeDeleteInTx(ctx, tx, service, op.Keys)
+	case "UPDATE":
+		return executeUpdateInTx(ctx, tx, service, op.Keys, op.Entity)
+	case "INSERT":
+		return executeInsertInTx(ctx, tx, service, op.Entity)
+	default:
+		return fmt.Errorf("unknown operation type: %s", op.Type)
+	}
+}
+
+// executeDeleteInTx executa DELETE dentro de uma transação
+func executeDeleteInTx(ctx context.Context, tx *sql.Tx, service EntityService, keys map[string]interface{}) error {
+	baseService, ok := service.(*BaseEntityService)
+	if !ok {
+		return fmt.Errorf("service is not BaseEntityService")
+	}
+
+	metadata := baseService.GetMetadata()
+	query, args, err := baseService.provider.BuildDeleteQuery(metadata, keys)
+	if err != nil {
+		return fmt.Errorf("failed to build delete query: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to execute delete: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no rows deleted")
+	}
+
+	return nil
+}
+
+// executeUpdateInTx executa UPDATE dentro de uma transação
+func executeUpdateInTx(ctx context.Context, tx *sql.Tx, service EntityService, keys map[string]interface{}, entity map[string]interface{}) error {
+	baseService, ok := service.(*BaseEntityService)
+	if !ok {
+		return fmt.Errorf("service is not BaseEntityService")
+	}
+
+	metadata := baseService.GetMetadata()
+	
+	// Remove chaves dos dados
+	data := make(map[string]interface{})
+	for k, v := range entity {
+		data[k] = v
+	}
+	for key := range keys {
+		delete(data, key)
+	}
+
+	query, args, err := baseService.provider.BuildUpdateQuery(metadata, data, keys)
+	if err != nil {
+		return fmt.Errorf("failed to build update query: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to execute update: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no rows updated")
+	}
+
+	return nil
+}
+
+// executeInsertInTx executa INSERT dentro de uma transação
+func executeInsertInTx(ctx context.Context, tx *sql.Tx, service EntityService, entity map[string]interface{}) error {
+	baseService, ok := service.(*BaseEntityService)
+	if !ok {
+		return fmt.Errorf("service is not BaseEntityService")
+	}
+
+	metadata := baseService.GetMetadata()
+	query, args, err := baseService.provider.BuildInsertQuery(metadata, entity)
+	if err != nil {
+		return fmt.Errorf("failed to build insert query: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to execute insert: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no rows inserted")
 	}
 
 	return nil

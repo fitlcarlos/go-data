@@ -310,17 +310,52 @@ func (s *Server) handleUpdateEntity(c fiber.Ctx, service EntityService, keys map
 		return nil
 	}
 
-	updatedEntity, err := service.Update(c.Context(), keys, entity)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
-		} else {
-			s.writeError(c, fiber.StatusInternalServerError, "UpdateError", err.Error())
+	// PUT: comportamento atual INALTERADO - chama Update diretamente
+	if c.Method() == "PUT" {
+		updatedEntity, err := service.Update(c.Context(), keys, entity)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
+			} else {
+				s.writeError(c, fiber.StatusInternalServerError, "UpdateError", err.Error())
+			}
+			return nil
 		}
-		return nil
+		return c.JSON(updatedEntity)
 	}
 
-	return c.JSON(updatedEntity)
+	// PATCH: tenta usar método Patch se disponível, fallback para Update
+	if c.Method() == "PATCH" {
+		// Verifica se o serviço implementa método Patch
+		if baseService, ok := service.(*BaseEntityService); ok {
+			updatedEntity, err := baseService.Patch(c.Context(), keys, entity)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
+				} else {
+					s.writeError(c, fiber.StatusInternalServerError, "UpdateError", err.Error())
+				}
+				return nil
+			}
+			return c.JSON(updatedEntity)
+		}
+
+		// Fallback para Update se Patch não estiver disponível
+		updatedEntity, err := service.Update(c.Context(), keys, entity)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
+			} else {
+				s.writeError(c, fiber.StatusInternalServerError, "UpdateError", err.Error())
+			}
+			return nil
+		}
+		return c.JSON(updatedEntity)
+	}
+
+	// Método não suportado (não deveria chegar aqui)
+	s.writeError(c, fiber.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed")
+	return nil
 }
 
 // handleDeleteEntity lida com DELETE para remover uma entidade

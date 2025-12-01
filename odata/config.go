@@ -125,6 +125,9 @@ type EnvConfig struct {
 	RateLimitWindowSize        time.Duration
 	RateLimitHeaders           bool
 
+	// Configurações de PATCH OData 4.01
+	PatchRemovedFormat string // Formato aceito para @odata.removed: "both", "empty", "with_reason" (default: "both")
+
 	// Mapa de todas as variáveis para acesso direto
 	Variables map[string]string
 }
@@ -295,6 +298,9 @@ func (c *EnvConfig) parseVariables() {
 	c.RateLimitBurstSize = c.getEnvInt("RATE_LIMIT_BURST_SIZE", DefaultRateLimitBurstSize)
 	c.RateLimitWindowSize = c.getEnvDuration("RATE_LIMIT_WINDOW_SIZE", DefaultRateLimitWindow)
 	c.RateLimitHeaders = c.getEnvBool("RATE_LIMIT_HEADERS", true)
+
+	// Configurações de PATCH OData 4.01
+	c.PatchRemovedFormat = c.getEnvString("PATCH_REMOVED_FORMAT", "both") // both, empty, with_reason
 }
 
 // getEnvString retorna uma string do ambiente ou valor padrão
@@ -429,6 +435,9 @@ func (c *EnvConfig) ToServerConfig() *ServerConfig {
 			Headers:           c.RateLimitHeaders,
 		}
 	}
+
+	// Configurações de PATCH OData 4.01
+	config.PatchRemovedFormat = c.PatchRemovedFormat
 
 	return config
 }
