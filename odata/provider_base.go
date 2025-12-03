@@ -633,7 +633,23 @@ func (p *BaseProvider) ConvertValue(value interface{}, targetType string) (inter
 	case "time.Time":
 		switch v := value.(type) {
 		case string:
-			return time.Parse("2006-01-02T15:04:05", v)
+			// Tenta múltiplos formatos de data ISO 8601
+			formats := []string{
+				time.RFC3339Nano,                    // 2006-01-02T15:04:05.999999999Z07:00
+				time.RFC3339,                         // 2006-01-02T15:04:05Z07:00
+				"2006-01-02T15:04:05.999Z",          // 2006-01-02T15:04:05.999Z
+				"2006-01-02T15:04:05Z",              // 2006-01-02T15:04:05Z
+				"2006-01-02T15:04:05.999999999Z",    // 2006-01-02T15:04:05.999999999Z
+				"2006-01-02T15:04:05",               // 2006-01-02T15:04:05 (sem timezone)
+				"2006-01-02 15:04:05",               // 2006-01-02 15:04:05 (formato SQL)
+			}
+			
+			for _, format := range formats {
+				if t, err := time.Parse(format, v); err == nil {
+					return t, nil
+				}
+			}
+			return nil, fmt.Errorf("cannot parse time string '%s': format not recognized", v)
 		case time.Time:
 			return v, nil
 		default:
