@@ -56,7 +56,17 @@ func TestFiberCorrectSyntax(t *testing.T) {
 		executed = []string{}
 
 		handlers := []fiber.Handler{middleware1, middleware2, handler}
-		app.Get("/test2", handlers[0], handlers[1:]...)
+		// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+		handlersAny := make([]any, len(handlers))
+		for i, h := range handlers {
+			handlersAny[i] = h
+		}
+		// Converter handlersAny[1:] para []any
+		remainingHandlers := make([]any, len(handlersAny)-1)
+		for i := 1; i < len(handlersAny); i++ {
+			remainingHandlers[i-1] = handlersAny[i]
+		}
+		app.Get("/test2", handlersAny[0], remainingHandlers...)
 
 		req := httptest.NewRequest("GET", "/test2", nil)
 		resp, _ := app.Test(req)

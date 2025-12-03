@@ -22,7 +22,12 @@ func (s *Server) Get(path string, handlers ...fiber.Handler) fiber.Router {
 	// Último handler é o handler final, os anteriores são middlewares
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.Get(fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.Get(fullPath, finalHandler, middlewaresAny...)
 }
 
 // Post registra rota POST com prefixo automático
@@ -42,7 +47,12 @@ func (s *Server) Post(path string, handlers ...fiber.Handler) fiber.Router {
 
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.Post(fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.Post(fullPath, finalHandler, middlewaresAny...)
 }
 
 // Put registra rota PUT com prefixo automático
@@ -62,7 +72,12 @@ func (s *Server) Put(path string, handlers ...fiber.Handler) fiber.Router {
 
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.Put(fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.Put(fullPath, finalHandler, middlewaresAny...)
 }
 
 // Delete registra rota DELETE com prefixo automático
@@ -82,7 +97,12 @@ func (s *Server) Delete(path string, handlers ...fiber.Handler) fiber.Router {
 
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.Delete(fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.Delete(fullPath, finalHandler, middlewaresAny...)
 }
 
 // Patch registra rota PATCH com prefixo automático
@@ -102,7 +122,12 @@ func (s *Server) Patch(path string, handlers ...fiber.Handler) fiber.Router {
 
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.Patch(fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.Patch(fullPath, finalHandler, middlewaresAny...)
 }
 
 // Options registra rota OPTIONS com prefixo automático
@@ -120,7 +145,12 @@ func (s *Server) Options(path string, handlers ...fiber.Handler) fiber.Router {
 
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.Options(fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.Options(fullPath, finalHandler, middlewaresAny...)
 }
 
 // Head registra rota HEAD com prefixo automático
@@ -138,7 +168,12 @@ func (s *Server) Head(path string, handlers ...fiber.Handler) fiber.Router {
 
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.Head(fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.Head(fullPath, finalHandler, middlewaresAny...)
 }
 
 // All registra rota para todos os métodos HTTP com prefixo automático
@@ -156,12 +191,22 @@ func (s *Server) All(path string, handlers ...fiber.Handler) fiber.Router {
 
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.All(fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.All(fullPath, finalHandler, middlewaresAny...)
 }
 
 // Group cria grupo de rotas
 func (s *Server) Group(prefix string, handlers ...fiber.Handler) fiber.Router {
-	return s.router.Group(prefix, handlers...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	handlersAny := make([]any, len(handlers))
+	for i, h := range handlers {
+		handlersAny[i] = h
+	}
+	return s.router.Group(prefix, handlersAny...)
 }
 
 // Use adiciona middleware global
@@ -184,5 +229,10 @@ func (s *Server) Add(methods []string, path string, handlers ...fiber.Handler) f
 
 	finalHandler := handlers[len(handlers)-1]
 	middlewares := handlers[:len(handlers)-1]
-	return s.router.Add(methods, fullPath, finalHandler, middlewares...)
+	// Converter []fiber.Handler para []any para compatibilidade com Fiber v3
+	middlewaresAny := make([]any, len(middlewares))
+	for i, m := range middlewares {
+		middlewaresAny[i] = m
+	}
+	return s.router.Add(methods, fullPath, finalHandler, middlewaresAny...)
 }

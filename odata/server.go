@@ -195,7 +195,6 @@ func newServerWithConfig(provider DatabaseProvider, config *ServerConfig) *Serve
 	if config.EnableLogging {
 		server.router.Use(fiberlogger.New(fiberlogger.Config{
 			Format: "${time} ${method} ${path} ${status} ${latency} ${bytesReceived} ${bytesSent}\n",
-			Output: os.Stdout,
 		}))
 	}
 

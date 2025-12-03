@@ -44,9 +44,13 @@ func (s *Server) setupEntityRoutes(entityName string) {
 	entityAuth, hasAuth := s.GetEntityAuth(entityName)
 
 	// Preparar middlewares customizados da entidade
-	var middlewares []fiber.Handler
+	// Usar []any desde o início para evitar conversão posterior
+	var middlewares []any
 	if hasAuth && len(entityAuth.Middlewares) > 0 {
-		middlewares = append(middlewares, entityAuth.Middlewares...)
+		// Converter []fiber.Handler para []any ao adicionar
+		for _, m := range entityAuth.Middlewares {
+			middlewares = append(middlewares, m)
+		}
 	}
 
 	// Adicionar middleware de readonly se necessário

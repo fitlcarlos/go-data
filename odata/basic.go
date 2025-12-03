@@ -19,7 +19,7 @@ func (s *Server) NewRouterBasicAuth(validator func(string, string) bool, config 
 	// Se validator foi fornecido, usa ele
 	if validator != nil {
 		cfg = basicauth.Config{
-			Authorizer: func(username, password string) bool {
+			Authorizer: func(username, password string, c fiber.Ctx) bool {
 				return validator(username, password)
 			},
 			Unauthorized: func(c fiber.Ctx) error {

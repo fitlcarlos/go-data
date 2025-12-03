@@ -2,7 +2,6 @@ package odata
 
 import (
 	"database/sql"
-	"os"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
@@ -39,7 +38,6 @@ func (s *Server) setupMultiTenantMiddlewares() {
 	if s.config.EnableLogging {
 		s.router.Use(fiberlogger.New(fiberlogger.Config{
 			Format: "${time} ${method} ${path} ${status} ${latency} [${locals:tenant_id}]\n",
-			Output: os.Stdout,
 		}))
 	}
 
