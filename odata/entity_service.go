@@ -707,8 +707,19 @@ func executeDeleteInTx(ctx context.Context, tx *sql.Tx, service EntityService, k
 		return fmt.Errorf("failed to build delete query: %w", err)
 	}
 
+	// Log da query SQL se DB_LOG_SQL estiver habilitado
+	if baseService.shouldLogSQL() {
+		log.Printf("🔍 [SQL] DELETE (TX): %s", query)
+		if len(args) > 0 {
+			log.Printf("🔍 [SQL] ARGS: %v", args)
+		}
+	}
+
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
+		if baseService.shouldLogSQL() {
+			log.Printf("❌ [SQL] ERRO: %v", err)
+		}
 		return fmt.Errorf("failed to execute delete: %w", err)
 	}
 
@@ -747,8 +758,19 @@ func executeUpdateInTx(ctx context.Context, tx *sql.Tx, service EntityService, k
 		return fmt.Errorf("failed to build update query: %w", err)
 	}
 
+	// Log da query SQL se DB_LOG_SQL estiver habilitado
+	if baseService.shouldLogSQL() {
+		log.Printf("🔍 [SQL] UPDATE (TX): %s", query)
+		if len(args) > 0 {
+			log.Printf("🔍 [SQL] ARGS: %v", args)
+		}
+	}
+
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
+		if baseService.shouldLogSQL() {
+			log.Printf("❌ [SQL] ERRO: %v", err)
+		}
 		return fmt.Errorf("failed to execute update: %w", err)
 	}
 
@@ -777,8 +799,19 @@ func executeInsertInTx(ctx context.Context, tx *sql.Tx, service EntityService, e
 		return fmt.Errorf("failed to build insert query: %w", err)
 	}
 
+	// Log da query SQL se DB_LOG_SQL estiver habilitado
+	if baseService.shouldLogSQL() {
+		log.Printf("🔍 [SQL] INSERT (TX): %s", query)
+		if len(args) > 0 {
+			log.Printf("🔍 [SQL] ARGS: %v", args)
+		}
+	}
+
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
+		if baseService.shouldLogSQL() {
+			log.Printf("❌ [SQL] ERRO: %v", err)
+		}
 		return fmt.Errorf("failed to execute insert: %w", err)
 	}
 

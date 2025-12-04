@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -517,9 +518,20 @@ func (bp *BatchProcessor) executeCreate(ctx context.Context, tx *sql.Tx, service
 		}, nil
 	}
 
+	// Log da query SQL se DB_LOG_SQL estiver habilitado
+	if bp.server.GetConfig() != nil && bp.server.GetConfig().DBLogSQL {
+		log.Printf("🔍 [SQL] INSERT (BATCH): %s", query)
+		if len(args) > 0 {
+			log.Printf("🔍 [SQL] ARGS: %v", args)
+		}
+	}
+
 	// Execute INSERT dentro da transação
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
+		if bp.server.GetConfig() != nil && bp.server.GetConfig().DBLogSQL {
+			log.Printf("❌ [SQL] ERRO: %v", err)
+		}
 		return &BatchOperationResponse{
 			StatusCode: http.StatusInternalServerError,
 			Headers:    map[string]string{"Content-Type": "application/json"},
@@ -610,9 +622,20 @@ func (bp *BatchProcessor) executeUpdate(ctx context.Context, tx *sql.Tx, service
 		}, nil
 	}
 
+	// Log da query SQL se DB_LOG_SQL estiver habilitado
+	if bp.server.GetConfig() != nil && bp.server.GetConfig().DBLogSQL {
+		log.Printf("🔍 [SQL] UPDATE (BATCH): %s", query)
+		if len(args) > 0 {
+			log.Printf("🔍 [SQL] ARGS: %v", args)
+		}
+	}
+
 	// Execute UPDATE dentro da transação
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
+		if bp.server.GetConfig() != nil && bp.server.GetConfig().DBLogSQL {
+			log.Printf("❌ [SQL] ERRO: %v", err)
+		}
 		return &BatchOperationResponse{
 			StatusCode: http.StatusInternalServerError,
 			Headers:    map[string]string{"Content-Type": "application/json"},
@@ -692,9 +715,20 @@ func (bp *BatchProcessor) executeDelete(ctx context.Context, tx *sql.Tx, service
 		}, nil
 	}
 
+	// Log da query SQL se DB_LOG_SQL estiver habilitado
+	if bp.server.GetConfig() != nil && bp.server.GetConfig().DBLogSQL {
+		log.Printf("🔍 [SQL] DELETE (BATCH): %s", query)
+		if len(args) > 0 {
+			log.Printf("🔍 [SQL] ARGS: %v", args)
+		}
+	}
+
 	// Execute DELETE dentro da transação
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
+		if bp.server.GetConfig() != nil && bp.server.GetConfig().DBLogSQL {
+			log.Printf("❌ [SQL] ERRO: %v", err)
+		}
 		return &BatchOperationResponse{
 			StatusCode: http.StatusInternalServerError,
 			Headers:    map[string]string{"Content-Type": "application/json"},
