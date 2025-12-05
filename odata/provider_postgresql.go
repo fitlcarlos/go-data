@@ -409,7 +409,90 @@ func (p *PostgreSQLProvider) FormatDateTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04:05")
 }
 
-// buildCondition sobrescreve o método base para usar placeholders do PostgreSQL
+// BuildWhereClause constrói a cláusula WHERE específica para PostgreSQL (usa $1, $2, etc.)
+func (p *PostgreSQLProvider) BuildWhereClause(filter string, metadata EntityMetadata) (string, []interface{}, error) {
+	if filter == "" {
+		return "", nil, nil
+	}
+
+	parser := NewODataParser()
+	expressions, err := parser.ParseFilter(filter)
+	if err != nil {
+		return "", nil, err
+	}
+
+	var conditions []string
+	var args []interface{}
+	argIndex := 1
+
+	for _, expr := range expressions {
+		// Encontra a propriedade nos metadados
+		var prop *PropertyMetadata
+		for _, pm := range metadata.Properties {
+			if pm.Name == expr.Property {
+				prop = &pm
+				break
+			}
+		}
+
+		if prop == nil {
+			return "", nil, fmt.Errorf("property %s not found in entity %s", expr.Property, metadata.Name)
+		}
+
+		condition, arg, err := p.buildConditionWithIndex(expr, *prop, &argIndex)
+		if err != nil {
+			return "", nil, err
+		}
+
+		conditions = append(conditions, condition)
+		if arg != nil {
+			if argSlice, ok := arg.([]interface{}); ok {
+				args = append(args, argSlice...)
+			} else {
+				args = append(args, arg)
+			}
+		}
+	}
+
+	whereClause := strings.Join(conditions, " AND ")
+	return whereClause, args, nil
+}
+
+// buildConditionWithIndex constrói condição individual usando placeholders PostgreSQL ($1, $2...)
+func (p *PostgreSQLProvider) buildConditionWithIndex(expr FilterExpression, prop PropertyMetadata, argIndex *int) (string, interface{}, error) {
+	columnName := prop.ColumnName
+	if columnName == "" {
+		columnName = prop.Name
+	}
+
+	placeholder := fmt.Sprintf("$%d", *argIndex)
+	*argIndex++
+
+	switch expr.Operator {
+	case FilterEq:
+		return fmt.Sprintf("%s = %s", columnName, placeholder), expr.Value, nil
+	case FilterNe:
+		return fmt.Sprintf("%s != %s", columnName, placeholder), expr.Value, nil
+	case FilterGt:
+		return fmt.Sprintf("%s > %s", columnName, placeholder), expr.Value, nil
+	case FilterGe:
+		return fmt.Sprintf("%s >= %s", columnName, placeholder), expr.Value, nil
+	case FilterLt:
+		return fmt.Sprintf("%s < %s", columnName, placeholder), expr.Value, nil
+	case FilterLe:
+		return fmt.Sprintf("%s <= %s", columnName, placeholder), expr.Value, nil
+	case FilterContains:
+		return fmt.Sprintf("%s ILIKE %s", columnName, placeholder), fmt.Sprintf("%%%s%%", expr.Value), nil
+	case FilterStartsWith:
+		return fmt.Sprintf("%s ILIKE %s", columnName, placeholder), fmt.Sprintf("%s%%", expr.Value), nil
+	case FilterEndsWith:
+		return fmt.Sprintf("%s ILIKE %s", columnName, placeholder), fmt.Sprintf("%%%s", expr.Value), nil
+	default:
+		return "", nil, fmt.Errorf("unsupported operator: %s", expr.Operator)
+	}
+}
+
+// buildCondition sobrescreve o método base para usar placeholders do PostgreSQL (mantido para compatibilidade)
 func (p *PostgreSQLProvider) buildCondition(expr FilterExpression, prop PropertyMetadata) (string, interface{}, error) {
 	columnName := prop.ColumnName
 	if columnName == "" {
