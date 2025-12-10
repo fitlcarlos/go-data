@@ -440,7 +440,53 @@ func (s *BaseEntityService) Create(ctx context.Context, entity any) (any, error)
 		return nil, fmt.Errorf("failed to build insert query: %w", err)
 	}
 
-	// Executa a query
+	// Verifica se a query contém RETURNING (PostgreSQL, Oracle, etc.)
+	hasReturning := strings.Contains(strings.ToUpper(query), "RETURNING")
+
+	if hasReturning {
+		// Para queries com RETURNING, usa Query para obter os valores retornados
+		// (usamos Query em vez de QueryRow para poder obter os nomes das colunas dinamicamente)
+		conn := s.provider.GetConnection()
+		if conn == nil {
+			return nil, fmt.Errorf("database connection is nil")
+		}
+
+		// Log da query SQL se DB_LOG_SQL estiver habilitado
+		if s.shouldLogSQL() {
+			log.Printf("🔍 [SQL] EXEC (RETURNING): %s", query)
+			if len(args) > 0 {
+				log.Printf("🔍 [SQL] ARGS: %v", args)
+			}
+		}
+
+		// Executa a query e obtém o resultado
+		rows, err := conn.QueryContext(ctx, query, args...)
+		if err != nil {
+			if s.shouldLogSQL() {
+				log.Printf("❌ [SQL] ERRO na query: %v", err)
+			}
+			return nil, fmt.Errorf("failed to execute insert with returning: %w", err)
+		}
+		defer rows.Close()
+
+		// Usa scanRows para processar o resultado (já sabe lidar com mapeamento dinâmico de colunas)
+		results, err := s.scanRows(rows, []ExpandOption{})
+		if err != nil {
+			if s.shouldLogSQL() {
+				log.Printf("❌ [SQL] ERRO no scan: %v", err)
+			}
+			return nil, fmt.Errorf("failed to scan returned values: %w", err)
+		}
+
+		if len(results) == 0 {
+			return nil, fmt.Errorf("no rows returned from insert")
+		}
+
+		// Retorna a primeira (e única) row retornada
+		return results[0], nil
+	}
+
+	// Para bancos que não usam RETURNING (MySQL, SQLite), usa a abordagem tradicional
 	result, err := s.executeExec(ctx, query, args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute insert: %w", err)
@@ -579,11 +625,11 @@ func (s *BaseEntityService) Patch(ctx context.Context, keys map[string]any, enti
 		rootKeys := extractKeysFromEntity(data, s.metadata)
 		cleanEntity := cleanRemovedAnnotation(data)
 		operations = append(operations, PatchOperation{
-			Type:          "DELETE",
-			Entity:        cleanEntity,
-			Keys:          rootKeys,
+			Type:           "DELETE",
+			Entity:         cleanEntity,
+			Keys:           rootKeys,
 			NavigationPath: "",
-			EntityName:    s.metadata.Name,
+			EntityName:     s.metadata.Name,
 		})
 	} else {
 		// Processa propriedades de navegação recursivamente
@@ -602,11 +648,11 @@ func (s *BaseEntityService) Patch(ctx context.Context, keys map[string]any, enti
 		}
 
 		operations = append(operations, PatchOperation{
-			Type:          rootOpType,
-			Entity:        cleanEntity,
-			Keys:          rootKeys,
+			Type:           rootOpType,
+			Entity:         cleanEntity,
+			Keys:           rootKeys,
 			NavigationPath: "",
-			EntityName:    s.metadata.Name,
+			EntityName:     s.metadata.Name,
 		})
 	}
 
@@ -743,7 +789,7 @@ func executeUpdateInTx(ctx context.Context, tx *sql.Tx, service EntityService, k
 	}
 
 	metadata := baseService.GetMetadata()
-	
+
 	// Remove chaves dos dados
 	data := make(map[string]interface{})
 	for k, v := range entity {
