@@ -562,5 +562,10 @@ func createEventContext(c fiber.Ctx, entityName string) *EventContext {
 		ctx.UserScopes = user.Scopes
 	}
 
+	// Obtém o DatabaseProvider do servidor para uso no ObjectManager
+	if server := getServerFromContext(c); server != nil {
+		ctx.DatabaseProvider = server.getCurrentProvider(c)
+	}
+
 	return ctx
 }

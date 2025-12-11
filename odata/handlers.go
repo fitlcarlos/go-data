@@ -148,10 +148,44 @@ func (s *Server) handleCreateEntity(c fiber.Ctx, service EntityService) error {
 		return nil
 	}
 
-	createdEntity, err := service.Create(c.Context(), entity)
+	// Extrai o nome da entidade
+	entityName := s.extractEntityName(c.Path())
+
+	// Cria o contexto do evento
+	eventCtx := createEventContext(c, entityName)
+
+	// Dispara evento OnEntityInserting (antes da inserção)
+	insertingArgs := NewEntityInsertingArgs(eventCtx, entity)
+	if err := s.eventManager.Emit(insertingArgs); err != nil {
+		// Se o evento foi cancelado, retorna erro
+		if insertingArgs.IsCanceled() {
+			s.writeError(c, fiber.StatusBadRequest, "ValidationError", insertingArgs.GetCancelReason())
+			return nil
+		}
+		s.logger.Printf("❌ Erro no evento OnEntityInserting: %v", err)
+		s.writeError(c, fiber.StatusInternalServerError, "EventError", err.Error())
+		return nil
+	}
+
+	// Usa os dados modificados pelo evento (caso tenha sido alterado)
+	dataToInsert := insertingArgs.Data
+
+	// Executa a criação
+	createdEntity, err := service.Create(c.Context(), dataToInsert)
 	if err != nil {
+		// Dispara evento de erro
+		errorArgs := NewEntityErrorArgs(eventCtx, err, "Create", fiber.StatusInternalServerError)
+		s.eventManager.Emit(errorArgs) // Não retorna erro, apenas loga
+
 		s.writeError(c, fiber.StatusInternalServerError, "CreateError", err.Error())
 		return nil
+	}
+
+	// Dispara evento OnEntityInserted (após inserção bem-sucedida)
+	insertedArgs := NewEntityInsertedArgs(eventCtx, createdEntity)
+	if err := s.eventManager.Emit(insertedArgs); err != nil {
+		s.logger.Printf("❌ Erro no evento OnEntityInserted: %v", err)
+		// Não retorna erro aqui, pois a inserção já foi bem-sucedida
 	}
 
 	c.Set("Location", s.buildEntityURL(c, service, createdEntity))
@@ -310,64 +344,145 @@ func (s *Server) handleUpdateEntity(c fiber.Ctx, service EntityService, keys map
 		return nil
 	}
 
+	// Extrai o nome da entidade
+	entityName := s.extractEntityName(c.Path())
+
+	// Cria o contexto do evento
+	eventCtx := createEventContext(c, entityName)
+
+	// Busca a entidade original antes da atualização (para OnEntityModifying e OnEntityModified)
+	var originalEntity interface{}
+	if service != nil {
+		originalEntity, _ = service.Get(c.Context(), keys)
+	}
+
+	// Dispara evento OnEntityModifying (antes da atualização)
+	modifyingArgs := NewEntityModifyingArgs(eventCtx, keys, entity, originalEntity)
+	if err := s.eventManager.Emit(modifyingArgs); err != nil {
+		// Se o evento foi cancelado, retorna erro
+		if modifyingArgs.IsCanceled() {
+			s.writeError(c, fiber.StatusBadRequest, "ValidationError", modifyingArgs.GetCancelReason())
+			return nil
+		}
+		s.logger.Printf("❌ Erro no evento OnEntityModifying: %v", err)
+		s.writeError(c, fiber.StatusInternalServerError, "EventError", err.Error())
+		return nil
+	}
+
+	// Usa os dados modificados pelo evento (caso tenha sido alterado)
+	dataToUpdate := modifyingArgs.Data
+
+	var updatedEntity interface{}
+	var err error
+	operation := "Update"
+
 	// PUT: comportamento atual INALTERADO - chama Update diretamente
 	if c.Method() == "PUT" {
-		updatedEntity, err := service.Update(c.Context(), keys, entity)
+		updatedEntity, err = service.Update(c.Context(), keys, dataToUpdate)
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
 			} else {
+				// Dispara evento de erro
+				errorArgs := NewEntityErrorArgs(eventCtx, err, operation, fiber.StatusInternalServerError)
+				s.eventManager.Emit(errorArgs)
 				s.writeError(c, fiber.StatusInternalServerError, "UpdateError", err.Error())
 			}
 			return nil
 		}
-		return c.JSON(updatedEntity)
-	}
-
-	// PATCH: tenta usar método Patch se disponível, fallback para Update
-	if c.Method() == "PATCH" {
-		// Verifica se o serviço implementa método Patch
+	} else if c.Method() == "PATCH" {
+		operation = "Patch"
+		// PATCH: tenta usar método Patch se disponível, fallback para Update
 		if baseService, ok := service.(*BaseEntityService); ok {
-			updatedEntity, err := baseService.Patch(c.Context(), keys, entity)
+			updatedEntity, err = baseService.Patch(c.Context(), keys, dataToUpdate)
 			if err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
 				} else {
+					// Dispara evento de erro
+					errorArgs := NewEntityErrorArgs(eventCtx, err, operation, fiber.StatusInternalServerError)
+					s.eventManager.Emit(errorArgs)
 					s.writeError(c, fiber.StatusInternalServerError, "UpdateError", err.Error())
 				}
 				return nil
 			}
-			return c.JSON(updatedEntity)
-		}
-
-		// Fallback para Update se Patch não estiver disponível
-		updatedEntity, err := service.Update(c.Context(), keys, entity)
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
-			} else {
-				s.writeError(c, fiber.StatusInternalServerError, "UpdateError", err.Error())
+		} else {
+			// Fallback para Update se Patch não estiver disponível
+			updatedEntity, err = service.Update(c.Context(), keys, dataToUpdate)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
+				} else {
+					// Dispara evento de erro
+					errorArgs := NewEntityErrorArgs(eventCtx, err, operation, fiber.StatusInternalServerError)
+					s.eventManager.Emit(errorArgs)
+					s.writeError(c, fiber.StatusInternalServerError, "UpdateError", err.Error())
+				}
+				return nil
 			}
-			return nil
 		}
-		return c.JSON(updatedEntity)
+	} else {
+		// Método não suportado (não deveria chegar aqui)
+		s.writeError(c, fiber.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed")
+		return nil
 	}
 
-	// Método não suportado (não deveria chegar aqui)
-	s.writeError(c, fiber.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed")
-	return nil
+	// Dispara evento OnEntityModified (após atualização bem-sucedida)
+	modifiedArgs := NewEntityModifiedArgs(eventCtx, keys, updatedEntity, originalEntity)
+	if err := s.eventManager.Emit(modifiedArgs); err != nil {
+		s.logger.Printf("❌ Erro no evento OnEntityModified: %v", err)
+		// Não retorna erro aqui, pois a atualização já foi bem-sucedida
+	}
+
+	return c.JSON(updatedEntity)
 }
 
 // handleDeleteEntity lida com DELETE para remover uma entidade
 func (s *Server) handleDeleteEntity(c fiber.Ctx, service EntityService, keys map[string]interface{}) error {
+	// Extrai o nome da entidade
+	entityName := s.extractEntityName(c.Path())
+
+	// Cria o contexto do evento
+	eventCtx := createEventContext(c, entityName)
+
+	// Busca a entidade antes da exclusão (para OnEntityDeleting e OnEntityDeleted)
+	var entityToDelete interface{}
+	if service != nil {
+		entityToDelete, _ = service.Get(c.Context(), keys)
+	}
+
+	// Dispara evento OnEntityDeleting (antes da exclusão)
+	deletingArgs := NewEntityDeletingArgs(eventCtx, keys, entityToDelete)
+	if err := s.eventManager.Emit(deletingArgs); err != nil {
+		// Se o evento foi cancelado, retorna erro
+		if deletingArgs.IsCanceled() {
+			s.writeError(c, fiber.StatusBadRequest, "ValidationError", deletingArgs.GetCancelReason())
+			return nil
+		}
+		s.logger.Printf("❌ Erro no evento OnEntityDeleting: %v", err)
+		s.writeError(c, fiber.StatusInternalServerError, "EventError", err.Error())
+		return nil
+	}
+
+	// Executa a exclusão
 	err := service.Delete(c.Context(), keys)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			s.writeError(c, fiber.StatusNotFound, "EntityNotFound", err.Error())
 		} else {
+			// Dispara evento de erro
+			errorArgs := NewEntityErrorArgs(eventCtx, err, "Delete", fiber.StatusInternalServerError)
+			s.eventManager.Emit(errorArgs)
 			s.writeError(c, fiber.StatusInternalServerError, "DeleteError", err.Error())
 		}
 		return nil
+	}
+
+	// Dispara evento OnEntityDeleted (após exclusão bem-sucedida)
+	deletedArgs := NewEntityDeletedArgs(eventCtx, keys, entityToDelete)
+	if err := s.eventManager.Emit(deletedArgs); err != nil {
+		s.logger.Printf("❌ Erro no evento OnEntityDeleted: %v", err)
+		// Não retorna erro aqui, pois a exclusão já foi bem-sucedida
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
