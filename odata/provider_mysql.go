@@ -182,37 +182,45 @@ func (p *MySQLProvider) BuildInsertQuery(entity EntityMetadata, data map[string]
 	var args []interface{}
 
 	for key, value := range data {
-		// Encontra a propriedade nos metadados
 		var prop *PropertyMetadata
-		for _, p := range entity.Properties {
-			if p.Name == key {
-				prop = &p
+		for i := range entity.Properties {
+			pr := &entity.Properties[i]
+			if pr.Name == key || pr.ColumnName == key {
+				prop = pr
 				break
 			}
 		}
-
-		if prop == nil {
-			continue // Ignora propriedades não encontradas
-		}
-
-		if prop.IsNavigation {
-			continue // Ignora propriedades de navegação
-		}
-
-		columnName := prop.ColumnName
-		if columnName == "" {
-			columnName = prop.Name
+		var columnName string
+		var convertType string
+		if prop != nil {
+			if prop.IsNavigation {
+				continue
+			}
+			columnName = prop.ColumnName
+			if columnName == "" {
+				columnName = prop.Name
+			}
+			convertType = prop.Type
+		} else {
+			for i := range entity.Properties {
+				nav := &entity.Properties[i]
+				if nav.Association != nil && nav.Association.ForeignKey == key {
+					columnName = nav.Association.ForeignKey
+					convertType = "int64"
+					break
+				}
+			}
+			if columnName == "" {
+				continue
+			}
 		}
 
 		columns = append(columns, columnName)
 		placeholders = append(placeholders, "?")
-
-		// Converte o valor para o tipo apropriado
-		convertedValue, err := p.ConvertValue(value, prop.Type)
+		convertedValue, err := p.ConvertValue(value, convertType)
 		if err != nil {
 			return "", nil, err
 		}
-
 		args = append(args, convertedValue)
 	}
 
@@ -240,36 +248,44 @@ func (p *MySQLProvider) BuildUpdateQuery(entity EntityMetadata, data map[string]
 
 	// Constrói as cláusulas SET
 	for key, value := range data {
-		// Encontra a propriedade nos metadados
 		var prop *PropertyMetadata
-		for _, p := range entity.Properties {
-			if p.Name == key {
-				prop = &p
+		for i := range entity.Properties {
+			pr := &entity.Properties[i]
+			if pr.Name == key || pr.ColumnName == key {
+				prop = pr
 				break
 			}
 		}
-
-		if prop == nil {
-			continue // Ignora propriedades não encontradas
-		}
-
-		if prop.IsNavigation || prop.IsKey {
-			continue // Ignora propriedades de navegação e chaves
-		}
-
-		columnName := prop.ColumnName
-		if columnName == "" {
-			columnName = prop.Name
+		var columnName string
+		var convertType string
+		if prop != nil {
+			if prop.IsNavigation || prop.IsKey {
+				continue
+			}
+			columnName = prop.ColumnName
+			if columnName == "" {
+				columnName = prop.Name
+			}
+			convertType = prop.Type
+		} else {
+			for i := range entity.Properties {
+				nav := &entity.Properties[i]
+				if nav.Association != nil && nav.Association.ForeignKey == key {
+					columnName = nav.Association.ForeignKey
+					convertType = "int64"
+					break
+				}
+			}
+			if columnName == "" {
+				continue
+			}
 		}
 
 		setClauses = append(setClauses, fmt.Sprintf("%s = ?", columnName))
-
-		// Converte o valor para o tipo apropriado
-		convertedValue, err := p.ConvertValue(value, prop.Type)
+		convertedValue, err := p.ConvertValue(value, convertType)
 		if err != nil {
 			return "", nil, err
 		}
-
 		args = append(args, convertedValue)
 	}
 

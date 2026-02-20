@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"reflect"
 	"strings"
 )
 
@@ -426,6 +427,184 @@ func (s *BaseEntityService) getTokenTypeForValue(value any) int {
 	}
 }
 
+// processAssociationCascadeSaveUpdate persiste associações com cascade SaveUpdate antes do container.
+// Para cada propriedade de navegação (Association) que tenha SaveUpdate em CascadeFlags,
+// persiste o objeto associado (Create se sem ID, Update se com ID), obtém o ID e define a FK no data.
+func (s *BaseEntityService) processAssociationCascadeSaveUpdate(ctx context.Context, data map[string]any) error {
+	if s.server == nil {
+		return nil
+	}
+	for _, prop := range s.metadata.Properties {
+		if prop.Association == nil {
+			continue
+		}
+		if !hasCascadeFlag(prop.CascadeFlags, "SaveUpdate") {
+			continue
+		}
+		assoc := prop.Association
+		relatedName := assoc.RelatedEntity
+		if relatedName == "" {
+			relatedName = prop.RelatedType
+		}
+		if relatedName == "" {
+			continue
+		}
+		relatedService := s.getRelatedEntityService(relatedName)
+		if relatedService == nil {
+			if s.shouldLogSQL() {
+				log.Printf("Cascade SaveUpdate: entidade relacionada %q não encontrada, ignorando associação %s", relatedName, prop.Name)
+			}
+			continue
+		}
+		relatedMetadata := relatedService.GetMetadata()
+		keyProp := getFirstKeyProperty(relatedMetadata)
+		if keyProp == nil {
+			continue
+		}
+		rawVal := data[prop.Name]
+		if rawVal == nil {
+			// Associação nil: definir FK como nil se existir propriedade para a coluna
+			if fkProp := findPropertyByColumnName(s.metadata, assoc.ForeignKey); fkProp != nil {
+				data[fkProp.Name] = nil
+			}
+			delete(data, prop.Name)
+			continue
+		}
+		assocMap, err := s.associatedValueToMap(rawVal, relatedService)
+		if err != nil {
+			return fmt.Errorf("cascade SaveUpdate: converter associação %s: %w", prop.Name, err)
+		}
+		keys := extractKeysFromEntity(assocMap, relatedMetadata)
+		hasKey := hasAllKeys(keys, relatedMetadata)
+		var saved any
+		if hasKey {
+			saved, err = relatedService.Update(ctx, keys, assocMap)
+		} else {
+			saved, err = relatedService.Create(ctx, assocMap)
+		}
+		if err != nil {
+			return fmt.Errorf("cascade SaveUpdate: persistir %s para associação %s: %w", relatedName, prop.Name, err)
+		}
+		savedMap, err := resultToMap(saved)
+		if err != nil {
+			return fmt.Errorf("cascade SaveUpdate: resultado de %s: %w", prop.Name, err)
+		}
+		savedKeys := extractKeysFromEntity(savedMap, relatedMetadata)
+		keyVal, ok := savedKeys[keyProp.Name]
+		if !ok {
+			return fmt.Errorf("cascade SaveUpdate: chave %s não encontrada após persistir %s", keyProp.Name, relatedName)
+		}
+		if fkProp := findPropertyByColumnName(s.metadata, assoc.ForeignKey); fkProp != nil {
+			data[fkProp.Name] = keyVal
+		} else {
+			data[assoc.ForeignKey] = keyVal
+		}
+		delete(data, prop.Name)
+	}
+	return nil
+}
+
+func hasCascadeFlag(flags []string, want string) bool {
+	for _, f := range flags {
+		if strings.EqualFold(f, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *BaseEntityService) getRelatedEntityService(relatedName string) EntityService {
+	if s.server == nil {
+		return nil
+	}
+	if svc := s.server.GetEntityService(relatedName); svc != nil {
+		return svc
+	}
+	if strings.HasSuffix(relatedName, "s") && len(relatedName) > 1 {
+		base := relatedName[:len(relatedName)-1]
+		if svc := s.server.GetEntityService(base); svc != nil {
+			return svc
+		}
+	}
+	base := relatedName + "s"
+	return s.server.GetEntityService(base)
+}
+
+func findPropertyByColumnName(metadata EntityMetadata, columnName string) *PropertyMetadata {
+	for i := range metadata.Properties {
+		p := &metadata.Properties[i]
+		col := p.ColumnName
+		if col == "" {
+			col = p.Name
+		}
+		if col == columnName || p.Name == columnName {
+			return p
+		}
+	}
+	return nil
+}
+
+func getFirstKeyProperty(metadata EntityMetadata) *PropertyMetadata {
+	for i := range metadata.Properties {
+		if metadata.Properties[i].IsKey {
+			return &metadata.Properties[i]
+		}
+	}
+	return nil
+}
+
+func (s *BaseEntityService) associatedValueToMap(raw any, relatedService EntityService) (map[string]any, error) {
+	if m, ok := raw.(map[string]any); ok {
+		return m, nil
+	}
+	if m, ok := raw.(map[string]interface{}); ok {
+		out := make(map[string]any, len(m))
+		for k, v := range m {
+			out[k] = v
+		}
+		return out, nil
+	}
+	base, ok := relatedService.(*BaseEntityService)
+	if !ok {
+		return nil, fmt.Errorf("serviço relacionado não é BaseEntityService")
+	}
+	return base.entityToMap(raw)
+}
+
+func resultToMap(result any) (map[string]any, error) {
+	if m, ok := result.(map[string]any); ok {
+		return m, nil
+	}
+	if m, ok := result.(map[string]interface{}); ok {
+		out := make(map[string]any, len(m))
+		for k, v := range m {
+			out[k] = v
+		}
+		return out, nil
+	}
+	v := reflect.ValueOf(result)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("resultado não é map nem struct")
+	}
+	out := make(map[string]any)
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name := f.Name
+		if tag := f.Tag.Get("json"); tag != "" && tag != "-" {
+			name = strings.Split(tag, ",")[0]
+		}
+		out[name] = v.Field(i).Interface()
+	}
+	return out, nil
+}
+
 // Create cria uma nova entidade
 func (s *BaseEntityService) Create(ctx context.Context, entity any) (any, error) {
 	// Converte a entidade para map
@@ -433,7 +612,9 @@ func (s *BaseEntityService) Create(ctx context.Context, entity any) (any, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert entity to map: %w", err)
 	}
-
+	if err := s.processAssociationCascadeSaveUpdate(ctx, data); err != nil {
+		return nil, err
+	}
 	// Constrói a query SQL
 	query, args, err := s.provider.BuildInsertQuery(s.metadata, data)
 	if err != nil {
@@ -528,7 +709,9 @@ func (s *BaseEntityService) Update(ctx context.Context, keys map[string]any, ent
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert entity to map: %w", err)
 	}
-
+	if err := s.processAssociationCascadeSaveUpdate(ctx, data); err != nil {
+		return nil, err
+	}
 	// Remove as chaves dos dados a serem atualizados
 	for key := range keys {
 		delete(data, key)
